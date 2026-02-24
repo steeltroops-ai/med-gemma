@@ -1,0 +1,450 @@
+{
+  "aggregate": {
+    "backend": "google_ai_studio",
+    "n_scenarios": 10,
+    "soap_completeness": 100.0,
+    "icd_accuracy": 20.0,
+    "drug_interaction_detection": 70.0,
+    "avg_pipeline_time_ms": 5543.1,
+    "total_time_ms": 55431.0
+  },
+  "scenarios": [
+    {
+      "id": 1,
+      "name": "Acute Appendicitis",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "K35.80"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 10444.5,
+      "agents_executed": 4
+    },
+    {
+      "id": 2,
+      "name": "T2DM Follow-up with Neuropathy",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 2,
+        "expected": 2,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "E11.65",
+          "E11.42"
+        ],
+        "score": 1.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4594.7,
+      "agents_executed": 4
+    },
+    {
+      "id": 3,
+      "name": "Community-Acquired Pneumonia",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 1,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "J18.1"
+        ],
+        "score": 1.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": true,
+        "correct": false,
+        "score": 0.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 7404.1,
+      "agents_executed": 4
+    },
+    {
+      "id": 4,
+      "name": "Pediatric Otitis Media",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "H66.91"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4992.7,
+      "agents_executed": 4
+    },
+    {
+      "id": 5,
+      "name": "Hypertensive Emergency",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "I16.1"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4457.5,
+      "agents_executed": 4
+    },
+    {
+      "id": 6,
+      "name": "Major Depressive Disorder",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "F32.2"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": true,
+        "correct": false,
+        "score": 0.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4935.3,
+      "agents_executed": 4
+    },
+    {
+      "id": 7,
+      "name": "COPD Exacerbation",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "J44.1"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4368.2,
+      "agents_executed": 4
+    },
+    {
+      "id": 8,
+      "name": "Migraine with Aura",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "G43.1"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4529.8,
+      "agents_executed": 4
+    },
+    {
+      "id": 9,
+      "name": "Iron Deficiency Anemia",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "D50.9"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": false,
+        "correct": true,
+        "score": 1.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 5235.1,
+      "agents_executed": 4
+    },
+    {
+      "id": 10,
+      "name": "Atrial Fibrillation on Anticoagulation",
+      "soap": {
+        "complete": true,
+        "sections_filled": 4,
+        "total": 4,
+        "score": 1.0
+      },
+      "icd": {
+        "matched": 0,
+        "expected": 1,
+        "extracted": [
+          "R06.0 - Dyspnea",
+          "R05.9 - Cough, unspecified",
+          "J18.9 - Pneumonia, unspecified organism",
+          "I10 - Essential (primary) hypertension",
+          "E11.9 - Type 2 diabetes mellitus without complications",
+          "Z87.891 - Personal history of nicotine dependence"
+        ],
+        "expected_codes": [
+          "I48.91"
+        ],
+        "score": 0.0
+      },
+      "drug": {
+        "detected": false,
+        "expected": true,
+        "correct": false,
+        "score": 0.0,
+        "interactions_found": [],
+        "risk_level": "none"
+      },
+      "processing_time_ms": 4469.1,
+      "agents_executed": 4
+    }
+  ],
+  "telemetry": {
+    "agents": [
+      {
+        "agent_name": "transcription",
+        "model_id": "google/medasr",
+        "is_ready": true,
+        "execution_count": 10,
+        "failure_count": 0,
+        "success_rate": 1.0,
+        "total_time_ms": 0.1,
+        "avg_time_ms": 0.0,
+        "last_execution_ms": 0.0
+      },
+      {
+        "agent_name": "image_triage",
+        "model_id": "google/medsiglip-448",
+        "is_ready": true,
+        "execution_count": 0,
+        "failure_count": 0,
+        "success_rate": null,
+        "total_time_ms": 0.0,
+        "avg_time_ms": null,
+        "last_execution_ms": 0.0
+      },
+      {
+        "agent_name": "image_analysis",
+        "model_id": "google/medgemma-4b-it",
+        "is_ready": true,
+        "execution_count": 0,
+        "failure_count": 0,
+        "success_rate": null,
+        "total_time_ms": 0.0,
+        "avg_time_ms": null,
+        "last_execution_ms": 0.0
+      },
+      {
+        "agent_name": "clinical_reasoning",
+        "model_id": "google/medgemma-4b-it",
+        "is_ready": true,
+        "execution_count": 10,
+        "failure_count": 0,
+        "success_rate": 1.0,
+        "total_time_ms": 32610.3,
+        "avg_time_ms": 3261.0,
+        "last_execution_ms": 2185.3
+      },
+      {
+        "agent_name": "drug_interaction",
+        "model_id": "google/txgemma-2b-predict",
+        "is_ready": true,
+        "execution_count": 10,
+        "failure_count": 0,
+        "success_rate": 1.0,
+        "total_time_ms": 22735.9,
+        "avg_time_ms": 2273.6,
+        "last_execution_ms": 2283.4
+      },
+      {
+        "agent_name": "quality_assurance",
+        "model_id": "rules-engine",
+        "is_ready": true,
+        "execution_count": 10,
+        "failure_count": 0,
+        "success_rate": 1.0,
+        "total_time_ms": 1.0,
+        "avg_time_ms": 0.1,
+        "last_execution_ms": 0.1
+      }
+    ],
+    "pipeline": {
+      "agent_count": 6,
+      "total_executions": 40,
+      "total_failures": 0,
+      "aggregate_success_rate": 1.0
+    }
+  }
+}

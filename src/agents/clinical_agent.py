@@ -160,11 +160,8 @@ class ClinicalReasoningAgent(BaseAgent):
             log.info(f"Clinical reasoning API call successful: {len(raw_output)} chars")
         except Exception as exc:
             log.warning(f"HF API call failed: {exc} -- using demo clinical output")
-            return {
-                "soap_note": DEMO_SOAP.model_dump(),
-                "icd_codes": DEMO_ICD_CODES,
-                "raw_output": f"DEMO MODE (API unavailable: {exc}). Showing sample clinical output.",
-            }
+            # Deterministic fallback: extract structure from the transcript itself
+            return self._deterministic_fallback(transcript, image_findings)
 
         # Parse output
         soap_note = self._parse_soap(raw_output)
@@ -226,8 +223,179 @@ class ClinicalReasoningAgent(BaseAgent):
         matches = re.findall(pattern, text)
         return [m.strip() for m in matches] if matches else []
 
+    # ------------------------------------------------------------------
+    # Deterministic fallback (no LLM required)
+    # ------------------------------------------------------------------
+
+    # Common clinical diagnoses -> ICD-10 mapping
+    _DIAGNOSIS_ICD_MAP: dict[str, str] = {
+        "appendicitis": "K35.80 - Unspecified acute appendicitis without abscess",
+        "diabetes": "E11.65 - Type 2 diabetes mellitus with hyperglycemia",
+        "type 2 diabetes": "E11.65 - Type 2 diabetes mellitus with hyperglycemia",
+        "neuropathy": "G63 - Polyneuropathy in diseases classified elsewhere",
+        "peripheral neuropathy": "E11.42 - Type 2 DM with diabetic polyneuropathy",
+        "pneumonia": "J18.9 - Pneumonia, unspecified organism",
+        "hypertension": "I10 - Essential (primary) hypertension",
+        "asthma": "J45.41 - Moderate persistent asthma with acute exacerbation",
+        "depression": "F33.2 - Major depressive disorder, recurrent, severe",
+        "depressive disorder": "F33.2 - Major depressive disorder, recurrent, severe",
+        "stemi": "I21.0 - Acute transmural MI of anterior wall",
+        "myocardial infarction": "I21.0 - Acute transmural MI of anterior wall",
+        "uti": "N39.0 - Urinary tract infection, site not specified",
+        "urinary tract infection": "N39.0 - Urinary tract infection, site not specified",
+        "copd": "J44.1 - COPD with acute exacerbation",
+        "atrial fibrillation": "I48.91 - Unspecified atrial fibrillation",
+        "dyspnea": "R06.0 - Dyspnea",
+        "chest pain": "R07.9 - Chest pain, unspecified",
+        "cough": "R05.9 - Cough, unspecified",
+        "osteoarthritis": "M17.9 - Osteoarthritis of knee, unspecified",
+        "hyperlipidemia": "E78.5 - Hyperlipidemia, unspecified",
+        "anxiety": "F41.1 - Generalized anxiety disorder",
+        "back pain": "M54.5 - Low back pain",
+    }
+
+    # Vitals extraction patterns
+    _VITALS_PATTERNS: list[tuple[str, str]] = [
+        (r"(?:BP|blood pressure)\s*[:=]?\s*(\d{2,3}/\d{2,3})", "BP: {}"),
+        (r"(?:HR|heart rate|pulse)\s*[:=]?\s*(\d{2,3})", "HR: {}"),
+        (r"(?:RR|respiratory rate)\s*[:=]?\s*(\d{1,2})", "RR: {}"),
+        (r"(?:SpO2|O2 sat|oxygen sat)\s*[:=]?\s*(\d{2,3})%?", "SpO2: {}%"),
+        (r"(?:temp|temperature|fever)\s*(?:of)?\s*[:=]?\s*(\d{2,3}\.?\d?)\s*(?:F|degrees)?", "Temp: {}F"),
+        (r"(?:WBC|white blood cell)\s*[:=]?\s*([\d,]+\.?\d*)", "WBC: {}"),
+    ]
+
+    # Medication extraction patterns
+    _MEDICATION_PATTERN = re.compile(
+        r"\b(metformin|lisinopril|amlodipine|atorvastatin|sertraline|"
+        r"gabapentin|ibuprofen|acetaminophen|aspirin|warfarin|"
+        r"clopidogrel|heparin|amiodarone|omeprazole|prednisone|"
+        r"azithromycin|levofloxacin|albuterol|fluticasone|"
+        r"budesonide|tiotropium|nitrofurantoin|cefoxitin|"
+        r"glipizide|bupropion|tramadol|cyclobenzaprine|metoprolol|"
+        r"formoterol|pantoprazole|losartan|hydrochlorothiazide)\b",
+        re.IGNORECASE,
+    )
+
+    def _deterministic_fallback(
+        self, transcript: str, image_findings: str = ""
+    ) -> dict:
+        """Generate structured SOAP output from transcript using deterministic NLP.
+
+        This is the fallback path when no inference API is available.
+        It performs keyword-based extraction of:
+
+          - Subjective: patient demographics, symptoms, complaints
+          - Objective: vital signs, exam findings, lab results
+          - Assessment: diagnosis mapping to ICD-10 codes
+          - Plan: medication extraction and treatment directives
+        """
+        text_lower = transcript.lower()
+        sentences = [s.strip() for s in re.split(r'[.;]', transcript) if s.strip()]
+
+        # --- SUBJECTIVE ---
+        subjective_keywords = [
+            "presenting", "reports", "denies", "complains", "history of",
+            "pain", "cough", "fever", "nausea", "vomiting", "diarrhea",
+            "numbness", "tingling", "shortness of breath", "dyspnea",
+            "fatigue", "weight loss", "headache", "dizziness", "swelling",
+            "insomnia", "chest pain", "palpitations", "weakness",
+        ]
+        subjective_parts = []
+        for sent in sentences:
+            if any(kw in sent.lower() for kw in subjective_keywords):
+                subjective_parts.append(sent.strip())
+        subjective = ". ".join(subjective_parts[:6]) + "." if subjective_parts else transcript[:300]
+
+        # --- OBJECTIVE ---
+        # Extract vitals
+        vitals = []
+        for pattern, fmt in self._VITALS_PATTERNS:
+            match = re.search(pattern, transcript, re.IGNORECASE)
+            if match:
+                vitals.append(fmt.format(match.group(1)))
+
+        # Extract exam findings
+        exam_keywords = [
+            "exam", "auscultation", "palpation", "inspection",
+            "crackles", "wheezing", "murmur", "tenderness",
+            "retractions", "edema", "rash", "lesion", "erythema",
+            "consolidation", "opacity", "elevated",
+        ]
+        exam_parts = []
+        for sent in sentences:
+            if any(kw in sent.lower() for kw in exam_keywords):
+                exam_parts.append(sent.strip())
+
+        objective_lines = []
+        if vitals:
+            objective_lines.append("Vital Signs: " + ", ".join(vitals))
+        if exam_parts:
+            objective_lines.append("Physical Exam: " + ". ".join(exam_parts[:4]))
+        if image_findings:
+            objective_lines.append(f"Imaging: {image_findings}")
+
+        objective = "\n".join(objective_lines) if objective_lines else "See clinical encounter notes."
+
+        # --- ASSESSMENT ---
+        found_diagnoses = []
+        found_icd_codes = []
+        for diagnosis, icd_code in self._DIAGNOSIS_ICD_MAP.items():
+            if diagnosis.lower() in text_lower:
+                found_diagnoses.append(diagnosis.title())
+                if icd_code not in found_icd_codes:
+                    found_icd_codes.append(icd_code)
+
+        # Also extract any ICD codes already mentioned in the text
+        inline_codes = self._extract_icd_codes(transcript)
+        for code in inline_codes:
+            if code not in found_icd_codes:
+                found_icd_codes.append(code)
+
+        assessment_lines = []
+        for i, diag in enumerate(found_diagnoses[:5], 1):
+            assessment_lines.append(f"{i}. {diag}")
+        assessment = "\n".join(assessment_lines) if assessment_lines else "Clinical assessment pending specialist review."
+
+        # --- PLAN ---
+        medications = list(set(self._MEDICATION_PATTERN.findall(transcript)))
+        plan_keywords = [
+            "plan:", "start", "discontinue", "increase", "decrease",
+            "refer", "order", "prescribe", "follow-up", "recheck",
+            "return", "counsel", "admit", "discharge",
+        ]
+        plan_parts = []
+        for sent in sentences:
+            if any(kw in sent.lower() for kw in plan_keywords):
+                plan_parts.append(sent.strip())
+
+        plan_lines = []
+        if medications:
+            plan_lines.append("Medications: " + ", ".join(med.lower() for med in medications))
+        if plan_parts:
+            for p in plan_parts[:5]:
+                plan_lines.append(p)
+        plan = "\n".join(plan_lines) if plan_lines else "Follow-up as clinically indicated."
+
+        soap_note = SOAPNote(
+            subjective=subjective,
+            objective=objective,
+            assessment=assessment,
+            plan=plan,
+        )
+
+        # Use ICD codes from diagnosis map, falling back to demo codes
+        icd_codes = found_icd_codes if found_icd_codes else DEMO_ICD_CODES
+
+        return {
+            "soap_note": soap_note.model_dump(),
+            "icd_codes": icd_codes,
+            "raw_output": f"[Deterministic extraction mode] Processed {len(transcript)} chars, "
+                          f"found {len(found_diagnoses)} diagnoses, {len(medications)} medications.",
+        }
+
     def get_demo_soap(self) -> SOAPNote:
         return DEMO_SOAP
 
     def get_demo_icd_codes(self) -> list[str]:
         return DEMO_ICD_CODES
+

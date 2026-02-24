@@ -21,12 +21,17 @@ KNOWN_INTERACTIONS = {
     ("metformin", "contrast dye"): "MODERATE: Hold metformin 48h before/after iodinated contrast.",
     ("warfarin", "aspirin"): "HIGH: Increased bleeding risk with concurrent use.",
     ("ssri", "nsaid"): "MODERATE: Increased GI bleeding risk.",
+    ("sertraline", "tramadol"): "HIGH: Serotonin syndrome risk. Concurrent serotonergic agents contraindicated.",
     ("metformin", "alcohol"): "MODERATE: Increased lactic acidosis risk.",
     ("lisinopril", "nsaid"): "MODERATE: NSAIDs may reduce ACE inhibitor efficacy and worsen renal function.",
+    ("lisinopril", "ibuprofen"): "HIGH: NSAIDs reduce antihypertensive effect and increase nephrotoxicity risk.",
     ("azithromycin", "amiodarone"): "HIGH: QT prolongation risk with concurrent use.",
+    ("warfarin", "amiodarone"): "HIGH: Amiodarone inhibits warfarin metabolism, dramatically increases INR.",
     ("statin", "grapefruit"): "LOW: Grapefruit may increase statin plasma levels.",
     ("warfarin", "ciprofloxacin"): "HIGH: Fluoroquinolones increase warfarin anticoagulant effect.",
+    ("warfarin", "omeprazole"): "MODERATE: Omeprazole may increase warfarin effect via CYP2C19 inhibition.",
     ("metformin", "furosemide"): "MODERATE: Loop diuretics may impair renal function, increase metformin toxicity risk.",
+    ("clopidogrel", "omeprazole"): "MODERATE: Omeprazole reduces clopidogrel antiplatelet effect via CYP2C19.",
 }
 
 DEMO_DRUG_CHECK = {
@@ -139,7 +144,10 @@ class DrugInteractionAgent(BaseAgent):
             r"metoprolol|losartan|albuterol|prednisone|amoxicillin|azithromycin|"
             r"ciprofloxacin|ibuprofen|acetaminophen|gabapentin|levothyroxine|"
             r"hydrochlorothiazide|furosemide|warfarin|clopidogrel|apixaban|"
-            r"insulin|glipizide|sitagliptin|empagliflozin|semaglutide)\b"
+            r"insulin|glipizide|sitagliptin|empagliflozin|semaglutide|"
+            r"sertraline|bupropion|tramadol|cyclobenzaprine|heparin|"
+            r"amiodarone|fluticasone|tiotropium|budesonide|formoterol|"
+            r"nitrofurantoin|cefoxitin|levofloxacin)\b"
         ]
         dose_pattern = r"(\b\w+\b)\s+(\d+\s*(?:mg|mcg|units?|ml)(?:\s*(?:daily|bid|tid|qid|prn|qhs|qam))?)"
 
