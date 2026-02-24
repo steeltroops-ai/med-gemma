@@ -1,3 +1,4 @@
+---
 title: MedScribe AI
 emoji: 🏥
 colorFrom: blue
@@ -5,7 +6,6 @@ colorTo: green
 sdk: docker
 pinned: false
 license: cc-by-4.0
-
 ---
 
 # MedScribe AI
