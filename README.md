@@ -1,13 +1,11 @@
----
 title: MedScribe AI
-emoji: +
+emoji: 🏥
 colorFrom: blue
 colorTo: green
-sdk: gradio
-sdk_version: 4.44.0
-app_file: demo/app.py
+sdk: docker
 pinned: false
 license: cc-by-4.0
+
 ---
 
 # MedScribe AI

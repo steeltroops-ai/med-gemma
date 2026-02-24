@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from src.agents.orchestrator import ClinicalOrchestrator
 from src.core.schemas import (
@@ -205,3 +206,16 @@ async def export_fhir(req: FHIRExportRequest):
         encounter_type=req.encounter_type,
     )
     return bundle
+
+
+# ---------------------------------------------------------------------------
+# Static Frontend Serving
+# ---------------------------------------------------------------------------
+
+# Mount the Next.js export directory
+frontend_path = Path(__file__).parent.parent.parent / "frontend" / "out"
+if frontend_path.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+else:
+    log.warning(f"Frontend path {frontend_path} not found. UI will not be served.")
+
