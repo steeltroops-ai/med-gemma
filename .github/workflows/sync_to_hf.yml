@@ -32,13 +32,13 @@ jobs:
 
           # Initialize a new git repo for the sync
           git init
-          git branch -M main
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
           # Add and commit
           git add .
           git commit -m "deploy: sync production-ready files"
+          git branch -M main
 
           # Force push to HF Space (targeting the main branch of the Space)
           git push -f https://steeltroops-ai:$HF_TOKEN@huggingface.co/spaces/steeltroops-ai/med-gemma main
