@@ -1,5 +1,7 @@
 # MedScribe AI: Multi-Agent Clinical Documentation via Orchestrated HAI-DEF Models
 
+**Goal Tracks:** Main Track & Agentic Workflow Prize (USD 10,000)
+
 ## Team
 
 **Mayank** -- Full-stack ML engineer. Designed and implemented the multi-agent architecture, HAI-DEF model integration pipeline, evaluation framework, and deployment infrastructure.

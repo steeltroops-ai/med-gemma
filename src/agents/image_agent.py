@@ -85,8 +85,9 @@ class ImageAnalysisAgent(BaseAgent):
         Returns:
             dict with "findings" and "specialty" keys.
         """
-        from src.core.inference_client import analyze_image_text, pil_to_bytes
         from PIL import Image as PILImage
+
+        from src.core.inference_client import analyze_image_text, pil_to_bytes
 
         if isinstance(input_data, PILImage.Image):
             image = input_data

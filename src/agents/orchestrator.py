@@ -19,13 +19,13 @@ import time
 from PIL import Image
 
 from src.agents.base import AgentResult
-from src.agents.transcription_agent import TranscriptionAgent
-from src.agents.image_agent import ImageAnalysisAgent
 from src.agents.clinical_agent import ClinicalReasoningAgent
-from src.agents.triage_agent import TriageAgent
 from src.agents.drug_agent import DrugInteractionAgent
+from src.agents.image_agent import ImageAnalysisAgent
 from src.agents.qa_agent import QAAgent
-from src.core.schemas import PipelineResponse, PipelineMetadata, SOAPNote
+from src.agents.transcription_agent import TranscriptionAgent
+from src.agents.triage_agent import TriageAgent
+from src.core.schemas import PipelineMetadata, PipelineResponse, SOAPNote
 from src.utils.fhir_builder import FHIRBuilder
 
 log = logging.getLogger(__name__)

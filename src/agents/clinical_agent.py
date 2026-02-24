@@ -130,8 +130,8 @@ class ClinicalReasoningAgent(BaseAgent):
             return
         try:
             import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
             from peft import PeftModel
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
             hf_token = os.environ.get("HF_TOKEN", "")
             log.info(f"Loading fine-tuned adapter: {FINETUNED_ADAPTER}")

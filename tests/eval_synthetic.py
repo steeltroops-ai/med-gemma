@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agents.orchestrator import ClinicalOrchestrator
 from src.core.schemas import SOAPNote
-
 
 # -----------------------------------------------------------------------
 # Ground-truth clinical scenarios
@@ -468,7 +466,7 @@ def print_summary(results: list[ScenarioResult]):
     print(f"| Medication extraction rate | ~60% | {med_rate:.0%} |")
     print(f"| Drug interaction detection | ~40% | {interaction_rate:.0%} |")
     print(f"| FHIR R4 structural validity | 0% | {fhir_rate:.0%} |")
-    print(f"| Structured output (not free text) | No | Yes |")
+    print("| Structured output (not free text) | No | Yes |")
 
     return {
         "scenarios": n,

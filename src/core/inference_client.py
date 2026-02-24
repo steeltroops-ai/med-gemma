@@ -295,9 +295,10 @@ def _genai_classify_image(
     api_key: str,
 ) -> list[dict]:
     """Simulate zero-shot classification using GenAI SDK multimodal."""
+    import json
+
     from google import genai
     from google.genai import types as gtypes
-    import json
 
     client = genai.Client(api_key=api_key)
 

@@ -84,12 +84,12 @@ for i, tc in enumerate(test_cases, 1):
         print(f"  Time: {elapsed:.1f}s")
         print(f"  Output ({len(result)} chars):")
         print(f"  {preview}...")
-        print(f"  RESULT: PASS (dynamic, input-specific output)")
+        print("  RESULT: PASS (dynamic, input-specific output)")
     except Exception as e:
         elapsed = time.perf_counter() - start
         print(f"  Time: {elapsed:.1f}s")
         print(f"  ERROR: {e}")
-        print(f"  RESULT: FAIL")
+        print("  RESULT: FAIL")
     print()
 
 # -----------------------------------------------------------------------
@@ -114,10 +114,10 @@ try:
     print(f"  Time: {elapsed:.1f}s")
     print(f"  Output ({len(result)} chars):")
     print(f"  {preview}...")
-    print(f"  RESULT: PASS")
+    print("  RESULT: PASS")
 except Exception as e:
     print(f"  ERROR: {e}")
-    print(f"  RESULT: FAIL")
+    print("  RESULT: FAIL")
 
 print("\n" + "=" * 60)
 print("Inference smoke test complete.")

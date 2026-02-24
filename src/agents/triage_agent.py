@@ -76,8 +76,9 @@ class TriageAgent(BaseAgent):
         Returns:
             dict with "predicted_specialty", "confidence", "all_scores"
         """
-        from src.core.inference_client import classify_image, pil_to_bytes
         from PIL import Image as PILImage
+
+        from src.core.inference_client import classify_image, pil_to_bytes
 
         if isinstance(input_data, PILImage.Image):
             image = input_data

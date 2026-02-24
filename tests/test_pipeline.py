@@ -9,16 +9,14 @@ import json
 import sys
 from pathlib import Path
 
-
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.core.schemas import SOAPNote, PipelineResponse
-from src.utils.fhir_builder import FHIRBuilder
-from src.agents.transcription_agent import TranscriptionAgent
+from src.agents.clinical_agent import DEMO_ICD_CODES, DEMO_SOAP, ClinicalReasoningAgent
 from src.agents.image_agent import ImageAnalysisAgent
-from src.agents.clinical_agent import ClinicalReasoningAgent, DEMO_SOAP, DEMO_ICD_CODES
-
+from src.agents.transcription_agent import TranscriptionAgent
+from src.core.schemas import PipelineResponse, SOAPNote
+from src.utils.fhir_builder import FHIRBuilder
 
 # ---------------------------------------------------------------------------
 # FHIR Builder Tests
