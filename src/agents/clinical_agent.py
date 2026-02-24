@@ -8,6 +8,7 @@ No local model loading. Calls HF Serverless Inference API with HF_TOKEN.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -100,21 +101,54 @@ DEMO_ICD_CODES = [
 ]
 
 
+# Fine-tuned adapter config
+FINETUNED_ADAPTER = "steeltroops-ai/medgemma-4b-soap-lora"
+
+
 class ClinicalReasoningAgent(BaseAgent):
     """
     Agent 3: Clinical Reasoning & Documentation.
 
     Calls MedGemma 4B IT via HF Serverless Inference API to generate
     SOAP notes, ICD-10 codes, and clinical summaries.
-    No local model loading -- works on CPU-only HF Spaces.
+
+    Set USE_FINETUNED_MODEL=true to load the LoRA fine-tuned adapter
+    locally instead of using the base model via API.
     """
 
     def __init__(self):
         super().__init__(name="clinical_reasoning", model_id="google/medgemma-4b-it")
-        self._ready = True  # Always ready -- uses API
+        self._local_model = None
+        self._local_tokenizer = None
+        self._use_finetuned = os.environ.get("USE_FINETUNED_MODEL", "").lower() in ("true", "1", "yes")
+        self._ready = True  # Always ready -- API fallback
 
     def _load_model(self) -> None:
-        # No local model -- API-based
+        """Optionally load fine-tuned LoRA adapter for local inference."""
+        if not self._use_finetuned:
+            self._ready = True
+            return
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from peft import PeftModel
+
+            hf_token = os.environ.get("HF_TOKEN", "")
+            log.info(f"Loading fine-tuned adapter: {FINETUNED_ADAPTER}")
+            base = AutoModelForCausalLM.from_pretrained(
+                self.model_id,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                token=hf_token,
+            )
+            model = PeftModel.from_pretrained(base, FINETUNED_ADAPTER, token=hf_token)
+            self._local_model = model.merge_and_unload()
+            self._local_tokenizer = AutoTokenizer.from_pretrained(self.model_id, token=hf_token)
+            self.model_id = FINETUNED_ADAPTER
+            log.info("Fine-tuned model loaded and merged successfully")
+        except Exception as exc:
+            log.warning(f"Failed to load fine-tuned adapter: {exc} -- falling back to API")
+            self._use_finetuned = False
         self._ready = True
 
     def _process(self, input_data: Any) -> dict:

@@ -9,6 +9,7 @@ import {
   Search,
   HeartPulse,
   Info,
+  FlaskConical,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { icon: FileText, label: "Patients", href: "/patients" },
   { icon: Search, label: "Search", href: "/search" },
   { icon: HeartPulse, label: "Analytics", href: "/analytics" },
+  { icon: FlaskConical, label: "Fine-Tuning", href: "/fine-tuning" },
   { icon: Info, label: "About", href: "/about" },
 ];
 

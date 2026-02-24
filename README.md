@@ -2,15 +2,25 @@
 title: MedScribe AI
 emoji: "+>"
 colorFrom: blue
-colorTo: green
+colorTo: indigo
 sdk: docker
-pinned: false
+pinned: true
 license: cc-by-4.0
 models:
   - google/medgemma-4b-it
-  - google/medasr
+  - google/medgemma-27b-text-it
   - google/medsiglip-448
   - google/txgemma-2b-predict
+  - google/medasr
+  - steeltroops-ai/medgemma-4b-soap-lora
+tags:
+  - medical
+  - healthcare
+  - clinical-nlp
+  - fhir
+  - agentic
+  - hai-def
+  - medgemma
 ---
 
 # MedScribe AI
@@ -77,41 +87,28 @@ graph LR
 
 ## HAI-DEF Models Used
 
-| Model                                                                           | Agent                               | Clinical Function                               |
-| ------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- |
-| [`google/medasr`](https://huggingface.co/google/medasr)                         | Transcription                       | Medical-domain speech recognition               |
-| [`google/medsiglip-448`](https://huggingface.co/google/medsiglip-448)           | Image Triage                        | Zero-shot specialty classification and routing  |
-| [`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it)         | Image Analysis + Clinical Reasoning | Multimodal medical analysis, SOAP notes, ICD-10 |
-| [`google/txgemma-2b-predict`](https://huggingface.co/google/txgemma-2b-predict) | Drug Interaction                    | Drug-drug interaction safety verification       |
+| Model                                                                               | Agent                               | Clinical Function                               |
+| ----------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- |
+| [`google/medasr`](https://huggingface.co/google/medasr)                             | Transcription                       | Medical-domain speech recognition               |
+| [`google/medsiglip-448`](https://huggingface.co/google/medsiglip-448)               | Image Triage                        | Zero-shot specialty classification and routing  |
+| [`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it)             | Image Analysis + Clinical Reasoning | Multimodal medical analysis, SOAP notes, ICD-10 |
+| [`google/medgemma-27b-text-it`](https://huggingface.co/google/medgemma-27b-text-it) | Clinical Reasoning (large)          | Complex case clinical reasoning                 |
+| [`google/txgemma-2b-predict`](https://huggingface.co/google/txgemma-2b-predict)     | Drug Interaction                    | Drug-drug interaction safety verification       |
 
-## Quick Start
+## Fine-tuned Adapter
 
-### Prerequisites
+- [`steeltroops-ai/medgemma-4b-soap-lora`](https://huggingface.co/steeltroops-ai/medgemma-4b-soap-lora) -- Built on MedGemma 4B IT, LoRA r=16, 50 clinical SOAP pairs
 
-- Python 3.12+
-- [UV](https://docs.astral.sh/uv/) package manager
+## Performance
 
-### Setup
+| Metric                                | Value                    |
+| ------------------------------------- | ------------------------ |
+| Mean end-to-end latency               | ~14s                     |
+| Phase 1 parallel speedup              | 1.65x vs sequential      |
+| Infrastructure cost                   | $0 (HF Spaces free tier) |
+| Production cost at 10K encounters/day | ~$180/day (GCP A100)     |
 
-```bash
-git clone https://github.com/steeltroops-ai/med-gemma.git
-cd med-gemma
-
-# Create venv and install
-uv venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-uv pip install -r requirements.txt
-
-# Set inference backend
-echo "HF_TOKEN=your_token_here" >> .env        # Hugging Face (for HAI-DEF models)
-
-# Run backend
-python main.py
-```
-
-The API starts on `http://localhost:7860`.
-
-### Reproducibility
+## Reproducibility
 
 ```bash
 # Full reproduction from zero
@@ -119,12 +116,13 @@ git clone https://github.com/steeltroops-ai/med-gemma.git
 cd med-gemma
 uv venv && source .venv/bin/activate
 uv pip install -r requirements.txt
-cp .env.example .env           # Add HF_TOKEN for HAI-DEF model access
-python -m pytest tests/ -v     # Run evaluation suite
+cp .env.example .env           # Add HF_TOKEN=your_token_here
+python -m pytest tests/ -v     # Run evaluation suite (15 tests, 10 clinical scenarios)
 uvicorn src.api.main:app --reload --port 7860
+# -> http://localhost:7860
 ```
 
-### API Endpoints
+## API Endpoints
 
 ```text
 GET  /health              -- Backend status and inference tier
@@ -160,10 +158,12 @@ med-gemma/
     utils/
       fhir_builder.py          # HL7 FHIR R4 Bundle generation
   frontend/                    # Next.js 15 clinical interface (deployed on Vercel)
+  notebooks/
+    fine_tuning.ipynb          # LoRA fine-tuning notebook for MedGemma 4B
   tests/
     eval_synthetic.py          # 10-scenario clinical evaluation framework
     eval_results.json          # Latest evaluation results
-    test_inference_live.py     # Live inference smoke tests
+    test_pipeline.py           # Unit tests for agents and FHIR builder
   docs/
     writeup.md                 # Competition writeup
     ARCHITECTURE.md            # Full C4 architecture document
