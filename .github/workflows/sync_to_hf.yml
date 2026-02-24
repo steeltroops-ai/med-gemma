@@ -21,7 +21,8 @@ jobs:
           mkdir -p hf_space
 
           # Copy only the files needed for the Docker build on HF
-          cp Dockerfile main.py README.md pyproject.toml uv.lock hf_space/
+          cp Dockerfile main.py README.md pyproject.toml hf_space/
+          [ -f uv.lock ] && cp uv.lock hf_space/ || echo "uv.lock not found, skipping"
           cp -r src hf_space/
           cp -r demo hf_space/       # Keep if needed for fallback/reference
           cp -r frontend hf_space/   # Needed because HF Docker will run the build stage
