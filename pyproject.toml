@@ -20,6 +20,7 @@ dependencies = [
     "bitsandbytes>=0.43.0",
     "requests>=2.31.0",
     "aiofiles>=23.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

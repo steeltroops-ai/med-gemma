@@ -4,6 +4,8 @@
 
 MedScribe AI is a multi-agent pipeline that transforms clinical encounters into structured medical records using Google's Health AI Developer Foundations (HAI-DEF) open-weight models.
 
+🏆 **[Read the Kaggle Competition MedGemma Impact Challenge Writeup Here](writeup.md)**
+
 ---
 
 ## Problem

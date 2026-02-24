@@ -7,7 +7,7 @@ Agent 2 in the MedScribe AI pipeline.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from PIL import Image

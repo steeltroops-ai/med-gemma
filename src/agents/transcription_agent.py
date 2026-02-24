@@ -7,7 +7,7 @@ Agent 1 in the MedScribe AI pipeline.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from src.agents.base import BaseAgent
 from src.core.models import model_manager

@@ -18,7 +18,9 @@ ENV/
 .idea/
 *.swp
 *.swo
-.agent/
+# Development and Planning
+.agents/
+MASTERPLAN.md
 docs/
 video/
 

@@ -8,10 +8,23 @@ and shared across agents.
 from __future__ import annotations
 
 import logging
+import os
 import torch
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger(__name__)
+
+
+def _get_hf_token() -> str | None:
+    """Get HF token from environment or config."""
+    token = os.environ.get("HF_TOKEN", "")
+    if not token:
+        try:
+            from src.core.config import config
+            token = config.hf_token
+        except Exception:
+            pass
+    return token if token else None
 
 
 class ModelManager:
@@ -21,11 +34,16 @@ class ModelManager:
         self._models: dict[str, Any] = {}
         self._processors: dict[str, Any] = {}
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        log.info(f"ModelManager initialised  |  device={self._device}")
+        self._has_gpu = torch.cuda.is_available()
+        log.info(f"ModelManager initialised  |  device={self._device}  |  GPU={'YES' if self._has_gpu else 'NO'}")
 
     @property
     def device(self) -> str:
         return self._device
+
+    @property
+    def has_gpu(self) -> bool:
+        return self._has_gpu
 
     # ------------------------------------------------------------------
     # MedGemma (multimodal or text-only)
@@ -43,11 +61,14 @@ class ModelManager:
         from transformers import AutoProcessor, AutoModelForImageTextToText
 
         log.info(f"Loading {model_id}  (quantize={quantize}) ...")
+        token = _get_hf_token()
 
         load_kwargs: dict[str, Any] = {
             "torch_dtype": torch.bfloat16,
             "device_map": "auto",
         }
+        if token:
+            load_kwargs["token"] = token
 
         if quantize:
             try:
@@ -63,6 +84,14 @@ class ModelManager:
             except ImportError:
                 log.warning("bitsandbytes not available -- loading without quantisation")
 
+        # Force CPU device_map when no GPU available
+        if not self._has_gpu:
+            load_kwargs["device_map"] = "cpu"
+            load_kwargs["torch_dtype"] = torch.float32
+            # Remove quantization on CPU -- bitsandbytes requires CUDA
+            load_kwargs.pop("quantization_config", None)
+            log.info("  -> CPU mode: using float32, no quantisation")
+
         # Try multimodal first, fall back to text-only CausalLM
         try:
             model = AutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
@@ -70,7 +99,7 @@ class ModelManager:
             from transformers import AutoModelForCausalLM
             model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
 
-        processor = AutoProcessor.from_pretrained(model_id)
+        processor = AutoProcessor.from_pretrained(model_id, token=token)
 
         self._models[model_id] = model
         self._processors[model_id] = processor
@@ -87,16 +116,21 @@ class ModelManager:
             return self._models[model_id]
 
         log.info(f"Loading {model_id} ...")
+        token = _get_hf_token()
         try:
             from transformers import pipeline as hf_pipeline
-            pipe = hf_pipeline("automatic-speech-recognition", model=model_id)
+            pipe = hf_pipeline(
+                "automatic-speech-recognition",
+                model=model_id,
+                token=token,
+                device=0 if self._has_gpu else -1,
+            )
             self._models[model_id] = pipe
             log.info(f"  -> {model_id} loaded successfully")
             return pipe
         except Exception as exc:
             log.error(f"Failed to load MedASR: {exc}")
-            log.info("MedASR requires transformers >= 5.0.0; "
-                     "falling back to mock transcription for demo.")
+            log.info("Falling back to demo transcription mode.")
             self._models[model_id] = None
             return None
 
@@ -110,10 +144,13 @@ class ModelManager:
             return self._models[model_id], self._processors[model_id]
 
         log.info(f"Loading {model_id} ...")
+        token = _get_hf_token()
         try:
             from transformers import AutoModel, AutoProcessor
-            model = AutoModel.from_pretrained(model_id, torch_dtype=torch.float32)
-            processor = AutoProcessor.from_pretrained(model_id)
+            model = AutoModel.from_pretrained(
+                model_id, torch_dtype=torch.float32, token=token,
+            )
+            processor = AutoProcessor.from_pretrained(model_id, token=token)
             model = model.to(self._device)
             self._models[model_id] = model
             self._processors[model_id] = processor
@@ -137,13 +174,23 @@ class ModelManager:
             del self._models[model_id]
         if model_id in self._processors:
             del self._processors[model_id]
-        torch.cuda.empty_cache()
+        if self._has_gpu:
+            torch.cuda.empty_cache()
         log.info(f"Unloaded {model_id}")
 
     def unload_all(self) -> None:
         model_ids = list(self._models.keys())
         for mid in model_ids:
             self.unload(mid)
+
+    def get_memory_info(self) -> dict:
+        """Return GPU/CPU memory usage info."""
+        info = {"device": self._device, "models_loaded": list(self._models.keys())}
+        if self._has_gpu:
+            info["gpu_allocated_mb"] = round(torch.cuda.memory_allocated() / 1e6, 1)
+            info["gpu_reserved_mb"] = round(torch.cuda.memory_reserved() / 1e6, 1)
+            info["gpu_total_mb"] = round(torch.cuda.get_device_properties(0).total_mem / 1e6, 1)
+        return info
 
 
 # Global singleton

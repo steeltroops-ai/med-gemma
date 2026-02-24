@@ -98,6 +98,9 @@ class PipelineResponse(BaseModel):
     soap_note: Optional[SOAPNote] = None
     icd_codes: list[str] = Field(default_factory=list)
     fhir_bundle: Optional[dict] = None
+    drug_interactions: Optional[dict] = None
+    quality_report: Optional[dict] = None
+    triage_result: Optional[dict] = None
     raw_clinical_output: str = ""
     pipeline_metadata: list[PipelineMetadata] = Field(default_factory=list)
     total_processing_time_ms: float = 0.0

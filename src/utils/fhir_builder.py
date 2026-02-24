@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
 from src.core.schemas import SOAPNote
 
