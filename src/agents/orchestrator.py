@@ -74,6 +74,30 @@ class ClinicalOrchestrator:
     def get_status(self) -> dict[str, bool]:
         return {a.name: a.is_ready for a in self._agents}
 
+    def get_telemetry(self) -> dict:
+        """Aggregate telemetry across all agents.
+
+        Returns per-agent execution statistics and pipeline-level
+        aggregate metrics for observability and audit compliance.
+        See ARCHITECTURE.md Section 11: Observability & Audit Trail.
+        """
+        agent_stats = [a.telemetry for a in self._agents]
+        total_executions = sum(s["execution_count"] for s in agent_stats)
+        total_failures = sum(s["failure_count"] for s in agent_stats)
+        return {
+            "agents": agent_stats,
+            "pipeline": {
+                "agent_count": len(self._agents),
+                "total_executions": total_executions,
+                "total_failures": total_failures,
+                "aggregate_success_rate": (
+                    round(1 - total_failures / total_executions, 4)
+                    if total_executions > 0
+                    else None
+                ),
+            },
+        }
+
     # ------------------------------------------------------------------
     # Full Pipeline
     # ------------------------------------------------------------------

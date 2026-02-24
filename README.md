@@ -108,9 +108,10 @@ The API starts on `http://localhost:7860`.
 
 ### API Endpoints
 
-```
+```text
 GET  /health              -- Backend status and inference tier
 GET  /api/status          -- Detailed model and configuration info
+GET  /api/telemetry       -- Per-agent execution stats and failure rates
 POST /api/transcribe      -- Audio -> Text (MedASR agent)
 POST /api/analyze-image   -- Image -> Findings (MedGemma agent)
 POST /api/generate-notes  -- Text -> SOAP + ICD-10 (Clinical agent)

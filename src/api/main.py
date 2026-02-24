@@ -93,7 +93,6 @@ async def health():
     return {
         "status": "ok",
         "inference_backend": backend,
-        "google_api_configured": bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")),
         "hf_token_configured": bool(os.environ.get("HF_TOKEN", "")),
     }
 
@@ -105,20 +104,30 @@ async def api_status():
     backend = get_inference_backend()
     return {
         "status": "online",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "inference_backend": backend,
         "models": {
-            "clinical_reasoning": "gemma-3-4b-it (via Google AI Studio)" if backend == "google_ai_studio" else "google/medgemma-4b-it",
-            "image_analysis": "gemma-3-4b-it (via Google AI Studio)" if backend == "google_ai_studio" else "google/medgemma-4b-it",
-            "image_triage": "gemma-3-4b-it (structured classification)" if backend == "google_ai_studio" else "google/medsiglip-448",
-            "transcription": "gemma-3-4b-it (audio)" if backend == "google_ai_studio" else "google/medasr",
-            "drug_interaction": "gemma-3-4b-it (drug safety)" if backend == "google_ai_studio" else "google/txgemma-2b-predict",
+            "clinical_reasoning": "google/medgemma-4b-it",
+            "image_analysis": "google/medgemma-4b-it",
+            "image_triage": "google/medsiglip-448",
+            "transcription": "google/medasr",
+            "drug_interaction": "google/txgemma-2b-predict",
             "quality_assurance": "rules-engine",
         },
-        "google_api_configured": bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")),
         "hf_token_configured": bool(os.environ.get("HF_TOKEN", "")),
         "mode": "live" if backend != "demo_fallback" else "demo",
     }
+
+
+@app.get("/api/telemetry")
+async def telemetry():
+    """Pipeline observability -- per-agent execution statistics.
+
+    Returns cumulative telemetry: execution counts, failure rates,
+    average latencies, and pipeline-level aggregate metrics.
+    See ARCHITECTURE.md Section 11: Observability & Audit Trail.
+    """
+    return orchestrator.get_telemetry()
 
 
 # ---------------------------------------------------------------------------
