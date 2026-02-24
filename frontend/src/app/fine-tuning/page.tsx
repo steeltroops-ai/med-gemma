@@ -64,15 +64,11 @@ export default function FineTuning() {
               Fine-Tuning Impact
             </h1>
             <p className="text-sm font-medium text-text-muted mb-10">
-              LoRA (r=16) fine-tuned on 54 synthetic SOAP note pairs | Adapter:{" "}
-              <a
-                href="https://huggingface.co/steeltroops-ai/medgemma-4b-soap-lora"
-                target="_blank"
-                rel="noreferrer"
-                className="text-accent-blue hover:underline"
-              >
-                steeltroops-ai/medgemma-4b-soap-lora
-              </a>
+              LoRA (r=16) fine-tuning pipeline on 54 synthetic SOAP note pairs |{" "}
+              Notebook:{" "}
+              <code className="text-accent-blue">
+                notebooks/med-gemma-4b-soap-lora.ipynb
+              </code>
             </p>
 
             <div className="space-y-10">

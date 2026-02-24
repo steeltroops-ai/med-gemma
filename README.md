@@ -12,7 +12,7 @@ models:
   - google/medsiglip-448
   - google/txgemma-2b-predict
   - google/medasr
-  - steeltroops-ai/medgemma-4b-soap-lora
+
 tags:
   - medical
   - healthcare
@@ -95,9 +95,11 @@ graph LR
 | [`google/medgemma-27b-text-it`](https://huggingface.co/google/medgemma-27b-text-it) | Clinical Reasoning (large)          | Complex case clinical reasoning                 |
 | [`google/txgemma-2b-predict`](https://huggingface.co/google/txgemma-2b-predict)     | Drug Interaction                    | Drug-drug interaction safety verification       |
 
-## Fine-tuned Adapter
+## Fine-tuning Pipeline
 
-- [`steeltroops-ai/medgemma-4b-soap-lora`](https://huggingface.co/steeltroops-ai/medgemma-4b-soap-lora) -- Built on MedGemma 4B IT, LoRA r=16, 50 clinical SOAP pairs
+- LoRA fine-tuning notebook: `notebooks/med-gemma-4b-soap-lora.ipynb`
+- Base model: MedGemma 4B IT, LoRA r=16, alpha=32, 54 clinical SOAP pairs
+- Clinical validation of the adapter is ongoing
 
 ## Performance
 
