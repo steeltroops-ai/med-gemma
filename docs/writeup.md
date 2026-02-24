@@ -1,6 +1,6 @@
 # MedScribe AI: Multi-Agent Clinical Documentation via Orchestrated HAI-DEF Models
 
-## Your team
+## Team
 
 **Mayank** -- Full-stack ML engineer. Designed and implemented the multi-agent architecture, HAI-DEF model integration pipeline, FastAPI backend, Next.js clinical interface, and deployment infrastructure. Solo submission.
 

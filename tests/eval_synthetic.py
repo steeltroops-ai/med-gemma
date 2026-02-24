@@ -511,3 +511,24 @@ if __name__ == "__main__":
         }, f, indent=2)
 
     print(f"\nResults saved to {output_path}")
+
+
+# ---------------------------------------------------------------------------
+# pytest-discoverable entry point
+# ---------------------------------------------------------------------------
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_synthetic_evaluation():
+    """Run the full 10-scenario synthetic evaluation and assert all metrics."""
+    results = await run_evaluation()
+    summary = print_summary(results)
+
+    assert summary["scenarios"] == 10, f"Expected 10 scenarios, got {summary['scenarios']}"
+    assert summary["soap_full_rate"] >= 0.9, f"SOAP 4/4 rate {summary['soap_full_rate']} < 0.9"
+    assert summary["icd_partial_rate"] >= 0.9, f"ICD partial rate {summary['icd_partial_rate']} < 0.9"
+    assert summary["medication_rate"] >= 0.9, f"Med rate {summary['medication_rate']} < 0.9"
+    assert summary["fhir_valid_rate"] >= 0.9, f"FHIR rate {summary['fhir_valid_rate']} < 0.9"
+

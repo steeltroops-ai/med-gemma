@@ -223,12 +223,17 @@ class ClinicalOrchestrator:
         log.info("PHASE 4: Drug Safety Check")
         drug_check = None
 
-        drug_input = {
-            "soap_text": (
-                f"{soap_note.plan}\n{soap_note.objective}" if soap_note
-                else transcript or text_input or ""
-            ),
-        }
+        # Feed both SOAP plan and original transcript for max medication coverage
+        drug_text_parts = []
+        if soap_note:
+            drug_text_parts.append(soap_note.plan)
+            drug_text_parts.append(soap_note.objective)
+        if transcript:
+            drug_text_parts.append(transcript)
+        elif text_input:
+            drug_text_parts.append(text_input)
+
+        drug_input = {"soap_text": "\n".join(drug_text_parts)}
         drug_result = await self.drug_interaction.execute(drug_input)
         metadata.append(PipelineMetadata(
             agent_name=drug_result.agent_name, success=drug_result.success,
@@ -245,12 +250,27 @@ class ClinicalOrchestrator:
         fhir_bundle = None
         qa_result_data = None
 
-        # Build FHIR first (needed for QA check)
+        # Extract medication list for FHIR MedicationStatement resources
+        medications_for_fhir: list[str] = []
+        if drug_check and isinstance(drug_check, dict):
+            meds_found = drug_check.get("medications_found", [])
+            if isinstance(meds_found, list):
+                medications_for_fhir = meds_found
+
+        # Build agent execution chain for Provenance resource
+        agent_chain = [
+            {"agent_name": m.agent_name, "model_used": m.model_used}
+            for m in metadata
+        ]
+
+        # Build FHIR bundle with medications and provenance
         if soap_note:
             fhir_bundle = FHIRBuilder.create_full_bundle(
                 soap_note=soap_note,
                 icd_codes=icd_codes,
                 image_findings=image_findings,
+                medications=medications_for_fhir,
+                agent_chain=agent_chain,
             )
 
         qa_input = {
@@ -273,6 +293,11 @@ class ClinicalOrchestrator:
         # =============================================================
         total_ms = (time.perf_counter() - pipeline_start) * 1000
 
+        # Build raw clinical output string for downstream consumers
+        raw_clinical = ""
+        if clinical_result.success and isinstance(clinical_result.data, dict):
+            raw_clinical = clinical_result.data.get("raw_output", "")
+
         log.info(f"PHASE 6: Assembly complete | {total_ms:.0f}ms total | "
                  f"{len(metadata)} agents executed")
 
@@ -285,6 +310,7 @@ class ClinicalOrchestrator:
             drug_interactions=drug_check,
             quality_report=qa_result_data,
             triage_result=triage_result,
+            raw_clinical_output=raw_clinical,
             pipeline_metadata=metadata,
             total_processing_time_ms=round(total_ms, 1),
         )

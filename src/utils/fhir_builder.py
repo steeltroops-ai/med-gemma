@@ -158,7 +158,7 @@ class FHIRBuilder:
                     {
                         "coding": [
                             {
-                                "system": "http://hl7.org/fhir/sid/icd-10",
+                                "system": "http://hl7.org/fhir/sid/icd-10-cm",
                                 "code": code,
                                 "display": desc,
                             }
@@ -184,7 +184,7 @@ class FHIRBuilder:
             "code": {
                 "coding": [
                     {
-                        "system": "http://hl7.org/fhir/sid/icd-10",
+                        "system": "http://hl7.org/fhir/sid/icd-10-cm",
                         "code": icd_code,
                         "display": description,
                     }
@@ -192,6 +192,77 @@ class FHIRBuilder:
                 "text": description,
             },
             "recordedDate": cls._now_iso(),
+        }
+
+    # ------------------------------------------------------------------
+    # MedicationStatement
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def create_medication_statement(cls, medication_name: str) -> dict:
+        """FHIR MedicationStatement for an extracted prescription."""
+        # Normalise: 'metformin 1000mg BID' -> display='metformin 1000mg BID', code text
+        return {
+            "resourceType": "MedicationStatement",
+            "id": cls._uid(),
+            "status": "active",
+            "medicationCodeableConcept": {
+                "text": medication_name,
+            },
+            "dateAsserted": cls._now_iso(),
+        }
+
+    # ------------------------------------------------------------------
+    # Provenance (audit trail)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def create_provenance(
+        cls,
+        agent_chain: list[dict] | None = None,
+    ) -> dict:
+        """FHIR Provenance resource for regulatory traceability.
+
+        Records the AI agent execution chain, model versions,
+        and inference timestamps.
+        """
+        agents = []
+        if agent_chain:
+            for info in agent_chain:
+                agents.append({
+                    "role": [
+                        {
+                            "coding": [
+                                {
+                                    "system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type",
+                                    "code": "performer",
+                                }
+                            ]
+                        }
+                    ],
+                    "who": {
+                        "display": f"{info.get('agent_name', 'unknown')} ({info.get('model_used', 'n/a')})",
+                    },
+                })
+
+        return {
+            "resourceType": "Provenance",
+            "id": cls._uid(),
+            "recorded": cls._now_iso(),
+            "activity": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v3-DocumentCompletion",
+                        "code": "AU",
+                        "display": "authenticated",
+                    }
+                ]
+            },
+            "agent": agents if agents else [
+                {
+                    "who": {"display": "MedScribe AI Pipeline"},
+                }
+            ],
         }
 
     # ------------------------------------------------------------------
@@ -205,6 +276,8 @@ class FHIRBuilder:
         icd_codes: list[str] | None = None,
         image_findings: str | None = None,
         encounter_type: str = "ambulatory",
+        medications: list[str] | None = None,
+        agent_chain: list[dict] | None = None,
     ) -> dict:
         """Assemble a complete FHIR Bundle from pipeline outputs."""
         resources = []
@@ -231,6 +304,14 @@ class FHIRBuilder:
                 code = parts[0].strip()
                 desc = parts[1].strip() if len(parts) > 1 else code
                 resources.append(cls.create_condition(code, desc))
+
+        # MedicationStatements
+        if medications:
+            for med in medications[:10]:
+                resources.append(cls.create_medication_statement(med))
+
+        # Provenance (audit trail)
+        resources.append(cls.create_provenance(agent_chain=agent_chain))
 
         return {
             "resourceType": "Bundle",

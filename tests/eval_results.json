@@ -8,7 +8,7 @@
     "medication_rate": 1.0,
     "interaction_rate": 1.0,
     "fhir_valid_rate": 1.0,
-    "avg_time_ms": 1.6
+    "avg_time_ms": 1.0
   },
   "per_scenario": [
     {
@@ -22,7 +22,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 3.9
+      "time_ms": 3.2
     },
     {
       "id": "SC-02",
@@ -35,7 +35,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 1.1
+      "time_ms": 1.0
     },
     {
       "id": "SC-03",
@@ -48,7 +48,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 0.9
+      "time_ms": 0.8
     },
     {
       "id": "SC-04",
@@ -61,7 +61,7 @@
       "interaction_detected": true,
       "interaction_expected": true,
       "fhir_valid": true,
-      "time_ms": 0.7
+      "time_ms": 0.8
     },
     {
       "id": "SC-05",
@@ -74,7 +74,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 0.8
+      "time_ms": 0.7
     },
     {
       "id": "SC-06",
@@ -87,7 +87,7 @@
       "interaction_detected": true,
       "interaction_expected": true,
       "fhir_valid": true,
-      "time_ms": 1.5
+      "time_ms": 0.7
     },
     {
       "id": "SC-07",
@@ -100,7 +100,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 1.2
+      "time_ms": 0.8
     },
     {
       "id": "SC-08",
@@ -113,7 +113,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 0.9
+      "time_ms": 0.5
     },
     {
       "id": "SC-09",
@@ -126,7 +126,7 @@
       "interaction_detected": true,
       "interaction_expected": false,
       "fhir_valid": true,
-      "time_ms": 2.3
+      "time_ms": 0.8
     },
     {
       "id": "SC-10",
@@ -139,7 +139,7 @@
       "interaction_detected": true,
       "interaction_expected": true,
       "fhir_valid": true,
-      "time_ms": 3.1
+      "time_ms": 0.7
     }
   ]
 }
