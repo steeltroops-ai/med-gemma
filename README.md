@@ -6,6 +6,11 @@ colorTo: green
 sdk: docker
 pinned: false
 license: cc-by-4.0
+models:
+  - google/medgemma-4b-it
+  - google/medasr
+  - google/medsiglip-448
+  - google/txgemma-2b-predict
 ---
 
 # MedScribe AI
@@ -106,6 +111,19 @@ python main.py
 
 The API starts on `http://localhost:7860`.
 
+### Reproducibility
+
+```bash
+# Full reproduction from zero
+git clone https://github.com/steeltroops-ai/med-gemma.git
+cd med-gemma
+uv venv && source .venv/bin/activate
+uv pip install -r requirements.txt
+cp .env.example .env           # Add HF_TOKEN for HAI-DEF model access
+python -m pytest tests/ -v     # Run evaluation suite
+uvicorn src.api.main:app --reload --port 7860
+```
+
 ### API Endpoints
 
 ```text
@@ -121,7 +139,7 @@ POST /api/export/fhir     -- Clinical data -> FHIR R4 Bundle
 
 ## Project Structure
 
-```
+```text
 med-gemma/
   src/
     agents/
@@ -143,9 +161,12 @@ med-gemma/
       fhir_builder.py          # HL7 FHIR R4 Bundle generation
   frontend/                    # Next.js 15 clinical interface (deployed on Vercel)
   tests/
+    eval_synthetic.py          # 10-scenario clinical evaluation framework
+    eval_results.json          # Latest evaluation results
     test_inference_live.py     # Live inference smoke tests
   docs/
     writeup.md                 # Competition writeup
+    ARCHITECTURE.md            # Full C4 architecture document
   video/
     script.md                  # Video script
 ```
@@ -168,6 +189,6 @@ CC BY 4.0
 
 ## Disclaimer
 
-MedScribe AI is a research demonstration and is NOT intended for clinical diagnosis, treatment, or patient management. All AI-generated outputs require independent verification by qualified healthcare professionals. This system is designed to assist clinical documentation, not to replace clinical judgement.
+MedScribe AI is a documentation assistant. It does not diagnose, prescribe, or replace physician judgement. All AI-generated outputs require independent verification by qualified healthcare professionals before clinical use. This system is designed to assist clinical documentation, not to automate clinical decision-making.
 
 Built with [HAI-DEF](https://developers.google.com/health-ai-developer-foundations) models from Google Health AI.
