@@ -1,6 +1,5 @@
 # MedScribe AI -- System Architecture
 
-> **Version:** 2.1.0 | **Last Updated:** 2026-02-24
 > **Classification:** Technical Architecture Document
 > **Audience:** Systems architects, ML engineers, clinical informatics engineers
 
@@ -32,7 +31,7 @@ MedScribe AI is designed around four architectural principles derived from both 
 
 **P2 -- Pipeline Composability:** The orchestration layer treats agents as interchangeable units conforming to a typed interface (`BaseAgent` -> `AgentResult`). New agents can be added, removed, or reordered without modifying the orchestrator's core logic.
 
-**P3 -- Inference Abstraction:** Agents are agnostic to the inference backend. The same agent code runs against Google AI Studio, HF Inference API, Vertex AI, or locally hosted model weights. The `InferenceClient` abstraction layer handles backend selection, retry, and fallback.
+**P3 -- Inference Abstraction:** Agents are agnostic to the inference backend. The same agent code runs against HF Inference API, Vertex AI, or locally hosted model weights. The `InferenceClient` abstraction layer handles backend selection, retry, and fallback.
 
 **P4 -- Clinical Safety by Design:** All outputs include provenance metadata (which model, which version, processing time, confidence). The QA agent enforces structural validation before any clinical document is emitted. No output is presented as definitive medical advice.
 
@@ -51,15 +50,13 @@ C4Context
 
     System(medscribe, "MedScribe AI", "Multi-agent clinical documentation system orchestrating HAI-DEF foundation models")
 
-    System_Ext(google_ai, "Google AI Studio", "Gemma 3 inference API (Tier 1)")
-    System_Ext(hf_api, "HF Inference API", "MedGemma / TxGemma inference (Tier 2)")
+    System_Ext(hf_inf, "HF Inference API", "HAI-DEF model serving via HF Serverless Inference")
     System_Ext(ehr, "EHR System", "HL7 FHIR R4 compliant electronic health record")
     System_Ext(hf_spaces, "Hugging Face Spaces", "Container hosting (CPU Docker)")
     System_Ext(vercel, "Vercel", "Frontend CDN and edge hosting")
 
     Rel(physician, medscribe, "Submits audio, images, clinical text", "HTTPS")
-    Rel(medscribe, google_ai, "Inference requests", "HTTPS/REST")
-    Rel(medscribe, hf_api, "Inference requests (fallback)", "HTTPS/REST")
+    Rel(medscribe, hf_inf, "HAI-DEF inference requests", "HTTPS/REST")
     Rel(medscribe, ehr, "Exports FHIR R4 Bundles", "HL7 FHIR REST")
     Rel(admin, medscribe, "Reviews audit trails, manages config", "HTTPS")
 
@@ -83,21 +80,21 @@ C4Container
         Container(api, "API Gateway", "FastAPI / Python 3.12", "REST API, request validation, CORS, rate limiting")
         Container(orchestrator, "Clinical Orchestrator", "Python async", "6-phase pipeline coordinator with parallel execution and fault isolation")
         Container(agents, "Agent Registry", "Python", "6 independent agents: Transcription, Triage, Image Analysis, Clinical Reasoning, Drug Interaction, QA")
-        Container(inference, "Inference Client", "Python", "Two-tier inference abstraction: Google AI Studio (T1) / HF API (T2) / Demo (T3)")
+        Container(inference, "Inference Client", "Python", "Multi-backend inference abstraction: HF API / Vertex AI / Local GPU / Demo fallback")
         Container(fhir, "FHIR Builder", "Python", "HL7 FHIR R4 Bundle generator with LOINC, SNOMED-CT, ICD-10 coding")
         ContainerDb(audit, "Audit Log", "Structured JSON", "Agent execution metadata, model provenance, timing telemetry")
     }
 
-    System_Ext(google_ai, "Google AI Studio API")
     System_Ext(hf_api, "HF Inference API")
+    System_Ext(vertex, "Vertex AI (Production)")
 
     Rel(physician, frontend, "Clinical encounter data", "HTTPS")
     Rel(frontend, api, "API calls", "HTTPS/REST")
     Rel(api, orchestrator, "Pipeline execution", "async/await")
     Rel(orchestrator, agents, "Agent dispatch", "async/await")
     Rel(agents, inference, "Inference requests", "function call")
-    Rel(inference, google_ai, "Tier 1 inference", "HTTPS")
-    Rel(inference, hf_api, "Tier 2 inference", "HTTPS")
+    Rel(inference, hf_api, "Serverless inference", "HTTPS")
+    Rel(inference, vertex, "Production inference", "HTTPS")
     Rel(orchestrator, fhir, "SOAP + ICD -> FHIR", "function call")
     Rel(orchestrator, audit, "Execution metadata", "structured log")
 
@@ -337,17 +334,17 @@ graph TD
         AG -->|"transcribe_audio(bytes)"| IC
     end
 
-    subgraph "Inference Client (Tier Selection)"
-        IC --> D1{GOOGLE_API_KEY<br/>set?}
-        D1 -->|Yes| T1[Tier 1: Google AI Studio<br/>gemma-3-4b-it<br/>Free / Always Available]
-        D1 -->|No| D2{HF_TOKEN<br/>set?}
-        D2 -->|Yes| T2[Tier 2: HF Inference API<br/>MedGemma / TxGemma<br/>Provider-Dependent]
-        D2 -->|No| T3[Tier 3: Demo Fallback<br/>Hardcoded Clinical Data<br/>Zero External Deps]
+    subgraph "Inference Client (Backend Selection)"
+        IC --> D1{HF_TOKEN<br/>set?}
+        D1 -->|Yes| T1[HF Serverless API<br/>MedGemma / TxGemma<br/>MedASR / MedSigLIP]
+        D1 -->|No| D2{Local GPU<br/>available?}
+        D2 -->|Yes| T2[Local Inference<br/>vLLM / Ollama<br/>On-Premise Models]
+        D2 -->|No| T3[Demo Fallback<br/>Hardcoded Clinical Data<br/>Zero External Deps]
     end
 
     subgraph "External Inference Providers"
-        T1 -->|HTTPS| GAS[Google AI Studio<br/>generativelanguage.googleapis.com]
-        T2 -->|HTTPS| HF[HF Router<br/>router.huggingface.co]
+        T1 -->|HTTPS| HFS[HF Serverless<br/>router.huggingface.co]
+        T2 -->|gRPC/HTTP| LOCAL[Local GPU<br/>vLLM / Ollama Server]
     end
 
     T1 -.->|On Failure| D2
@@ -356,21 +353,21 @@ graph TD
     style T1 fill:#0e6251,stroke:#1abc9c,color:#fff
     style T2 fill:#1a5276,stroke:#3498db,color:#fff
     style T3 fill:#7b241c,stroke:#e74c3c,color:#fff
-    style GAS fill:#0b5345,stroke:#1abc9c,color:#fff
-    style HF fill:#154360,stroke:#3498db,color:#fff
+    style HFS fill:#0b5345,stroke:#1abc9c,color:#fff
+    style LOCAL fill:#154360,stroke:#3498db,color:#fff
 ```
 
 ### Tier Comparison Matrix
 
-| Property                   | Tier 1: Google AI Studio   | Tier 2: HF Inference API      | Tier 3: Demo Fallback |
-| -------------------------- | -------------------------- | ----------------------------- | --------------------- |
-| **Model**                  | `gemma-3-4b-it`            | `google/medgemma-4b-it`       | N/A (hardcoded)       |
-| **Cost**                   | Free (rate-limited)        | Free-$0.06/hr (dedicated)     | Free                  |
-| **Latency**                | 2-8s per request           | 3-15s per request             | <1ms                  |
-| **Medical Specialisation** | General (prompted)         | Pre-trained medical           | Static                |
-| **Availability**           | 99.9% (Google SLA)         | Variable (provider-dependent) | 100%                  |
-| **Multimodal**             | Yes (text + image + audio) | Yes (model-dependent)         | No                    |
-| **Privacy**                | Data sent to Google API    | Data sent to HF API           | No external calls     |
+| Property                   | HF Serverless API       | Local GPU (vLLM/Ollama)      | Demo Fallback     |
+| -------------------------- | ----------------------- | ---------------------------- | ----------------- |
+| **Model**                  | `google/medgemma-4b-it` | `google/medgemma-4b-it` (Q4) | N/A (hardcoded)   |
+| **Cost**                   | Free / Pay-per-use      | Hardware cost only           | Free              |
+| **Latency**                | 3-15s per request       | 1-5s per request             | <1ms              |
+| **Medical Specialisation** | Full (HAI-DEF trained)  | Full (HAI-DEF trained)       | Static            |
+| **Availability**           | Provider-dependent      | Self-managed                 | 100%              |
+| **Multimodal**             | Yes (model-dependent)   | Yes (with VRAM)              | No                |
+| **Privacy**                | Data sent to HF API     | Data stays on-premise        | No external calls |
 
 ---
 
@@ -458,13 +455,12 @@ graph TB
             API[FastAPI<br/>Port 7860]
             ORC[ClinicalOrchestrator]
             AGT[Agent Registry<br/>6 Agents]
-            INF[InferenceClient<br/>Tier Selection]
+            INF[InferenceClient<br/>Backend Selection]
         end
     end
 
     subgraph "Inference Providers"
-        GAS[Google AI Studio<br/>gemma-3-4b-it]
-        HFA[HF Inference API<br/>MedGemma / TxGemma]
+        HFS[HF Serverless API<br/>HAI-DEF Models]
     end
 
     subgraph "Future: On-Premise Deployment"
@@ -475,27 +471,25 @@ graph TB
     B -->|HTTPS| FE
     FE -->|API calls| API
     API --> ORC --> AGT --> INF
-    INF -->|Tier 1| GAS
-    INF -->|Tier 2| HFA
-    INF -.->|Tier Local| GPU
+    INF -->|HF API| HFS
+    INF -.->|Local GPU| GPU
 
     style FE fill:#1a1a2e,stroke:#e94560,color:#fff
     style API fill:#16213e,stroke:#0f3460,color:#fff
     style ORC fill:#16213e,stroke:#0f3460,color:#fff
-    style GAS fill:#0e6251,stroke:#1abc9c,color:#fff
-    style HFA fill:#1a5276,stroke:#3498db,color:#fff
+    style HFS fill:#0e6251,stroke:#1abc9c,color:#fff
     style GPU fill:#4a235a,stroke:#8e44ad,color:#fff
     style PRIV fill:#7b241c,stroke:#e74c3c,color:#fff
 ```
 
 ### Resource Profile
 
-| Component                    | CPU            | Memory         | Storage  | Cost                |
-| ---------------------------- | -------------- | -------------- | -------- | ------------------- |
-| Frontend (Vercel)            | Edge           | 0 (SSG)        | ~5MB     | Free                |
-| Backend (HF Spaces)          | 2 vCPU         | 512MB          | 1GB      | Free                |
-| Inference (Google AI Studio) | Google-managed | Google-managed | 0        | Free (rate-limited) |
-| **Total**                    | **2 vCPU**     | **512MB**      | **~6MB** | **$0/month**        |
+| Component           | CPU        | Memory     | Storage  | Cost                |
+| ------------------- | ---------- | ---------- | -------- | ------------------- |
+| Frontend (Vercel)   | Edge       | 0 (SSG)    | ~5MB     | Free                |
+| Backend (HF Spaces) | 2 vCPU     | 512MB      | 1GB      | Free                |
+| Inference (HF API)  | HF-managed | HF-managed | 0        | Free (rate-limited) |
+| **Total**           | **2 vCPU** | **512MB**  | **~6MB** | **$0/month**        |
 
 ---
 
@@ -632,31 +626,31 @@ graph LR
   "pipeline_metadata": [
     {
       "agent_name": "transcription",
-      "model_used": "gemma-3-4b-it",
+      "model_used": "google/medgemma-4b-it",
       "processing_time_ms": 2340.1,
       "success": true
     },
     {
       "agent_name": "image_triage",
-      "model_used": "gemma-3-4b-it",
+      "model_used": "google/medgemma-4b-it",
       "processing_time_ms": 1890.3,
       "success": true
     },
     {
       "agent_name": "image_analysis",
-      "model_used": "gemma-3-4b-it",
+      "model_used": "google/medgemma-4b-it",
       "processing_time_ms": 3200.7,
       "success": true
     },
     {
       "agent_name": "clinical_reasoning",
-      "model_used": "gemma-3-4b-it",
+      "model_used": "google/medgemma-4b-it",
       "processing_time_ms": 5100.2,
       "success": true
     },
     {
       "agent_name": "drug_interaction",
-      "model_used": "gemma-3-4b-it",
+      "model_used": "google/medgemma-4b-it",
       "processing_time_ms": 2800.5,
       "success": true
     },
@@ -768,7 +762,7 @@ graph TD
 | **v4.1**           | Edge deployment (mobile / RPi)          | ONNX runtime agent + model distillation         |
 | **v5.0**           | Multi-institution federated deployment  | Agent mesh + federated learning coordinator     |
 
-### 13.3 Agent Mesh Vision (v5.0)
+### 13.3 Agent Mesh Vision
 
 ```mermaid
 graph TB

@@ -97,9 +97,8 @@ uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 uv pip install -r requirements.txt
 
-# Set inference backend (at least one required)
-echo "GOOGLE_API_KEY=your_key_here" >> .env    # Google AI Studio (free)
-echo "HF_TOKEN=your_token_here" >> .env        # Hugging Face (for gated models)
+# Set inference backend
+echo "HF_TOKEN=your_token_here" >> .env        # Hugging Face (for HAI-DEF models)
 
 # Run backend
 python main.py
@@ -136,7 +135,7 @@ med-gemma/
     api/
       main.py                  # FastAPI backend
     core/
-      inference_client.py      # Two-tier inference (Google AI Studio + HF API)
+      inference_client.py      # Multi-backend inference (HF API + local GPU)
       config.py                # Configuration
       schemas.py               # Pydantic models
     utils/
@@ -152,14 +151,15 @@ med-gemma/
 
 ## Inference Architecture
 
-HAI-DEF models are open-weight and not served by any free hosted inference API. MedScribe AI implements a two-tier inference strategy:
+All inference flows through the `InferenceClient` abstraction. Agents are fully agnostic to the serving backend.
 
-| Tier | Backend              | Models                               | Use Case                           |
-| ---- | -------------------- | ------------------------------------ | ---------------------------------- |
-| 1    | Google AI Studio API | `gemma-3-4b-it`                      | Live demo (free, always available) |
-| 2    | GPU Infrastructure   | MedGemma, MedASR, MedSigLIP, TxGemma | Production / evaluation            |
+| Backend           | Models                                        | Use Case                         |
+| ----------------- | --------------------------------------------- | -------------------------------- |
+| HF Serverless API | MedGemma 4B IT, MedASR, MedSigLIP, TxGemma 2B | Cloud deployment (HF Spaces)     |
+| Local GPU (vLLM)  | MedGemma 4B IT (Q4), TxGemma 2B               | On-premise / air-gapped clinical |
+| Demo Fallback     | N/A                                           | Development / CI testing         |
 
-The agent framework abstracts the inference backend. Agents are agnostic to which tier serves their requests.
+The agent framework abstracts the inference backend. Adding a new backend (Vertex AI, Ollama, ONNX) requires implementing a single adapter function -- zero agent code changes.
 
 ## License
 

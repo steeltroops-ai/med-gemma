@@ -1,10 +1,10 @@
 # MedScribe AI: Multi-Agent Clinical Documentation via Orchestrated HAI-DEF Models
 
-### Your team
+## Your team
 
 **Mayank** -- Full-stack ML engineer. Designed and implemented the multi-agent architecture, HAI-DEF model integration pipeline, FastAPI backend, Next.js clinical interface, and deployment infrastructure. Solo submission.
 
-### Problem statement
+## Problem statement
 
 **The clinical documentation crisis is quantifiable.** The American Medical Association reports that physicians spend 1.84 hours on EHR documentation for every 1 hour of direct patient care (Sinsky et al., Annals of Internal Medicine, 2016). The 2025 Medscape Physician Burnout Report identifies documentation burden as the primary contributor to burnout among 63% of surveyed physicians. Shanafelt et al. (Mayo Clinic Proceedings, 2022) demonstrate that EHR-related stress correlates with a 2.2x increase in reported medical errors.
 
@@ -18,13 +18,13 @@
 
 **Impact quantification.** Based on time-motion analysis of clinical documentation workflows (Arndt et al., Annals of Family Medicine, 2017), automated SOAP note generation with structured coding reduces per-encounter documentation time from approximately 16 minutes to under 4 minutes. For a physician seeing 20 patients daily, this recovers approximately 4 hours -- time redirected to patient care, reducing both burnout and error rates. At median physician compensation ($165/hour, MGMA 2024), the recovered capacity represents approximately $150,000 annually per physician. The open-weight, zero-cost deployment model ensures this is accessible to under-resourced and rural healthcare settings globally, not only to institutions that can afford enterprise SaaS contracts.
 
-### Overall solution
+## Overall solution
 
 MedScribe AI introduces a **multi-agent clinical orchestration architecture** that coordinates five HAI-DEF foundation models as independent, fault-tolerant agents across a six-phase pipeline. The system transforms the raw clinical encounter (audio dictation + medical images) into structured, EHR-compatible clinical documentation with pharmacological safety verification.
 
 **Architecture.** The pipeline operates in six sequential-parallel phases:
 
-```
+```text
 Phase 1 [PARALLEL]:  MedASR Agent (transcription) + MedSigLIP Agent (image triage)
 Phase 2 [ROUTED]:    MedGemma 4B IT Agent (specialty-specific image analysis)
 Phase 3 [SEQUENTIAL]: MedGemma 4B IT Agent (SOAP generation + ICD-10 extraction)
@@ -51,25 +51,25 @@ Phase 6 [INSTANT]:   FHIR R4 Assembly (HL7-compliant structured output)
 
 This orchestration pattern is generalisable. The same architecture applies to radiology workflows, pathology reporting, emergency triage, or any multi-step clinical process requiring coordinated AI agents.
 
-### Technical details
+## Technical details
 
-**Stack.** Python 3.12 / FastAPI (backend) on Hugging Face Spaces (CPU Docker, free tier). Next.js 15 / React (frontend) on Vercel. Inference via Google AI Studio API (Gemma 3 architecture family) for the live demo; MedGemma / MedASR / MedSigLIP / TxGemma on GPU infrastructure for production evaluation.
+**Stack.** Python 3.12 / FastAPI (backend) on Hugging Face Spaces (CPU Docker, free tier). Next.js 15 / React (frontend) on Vercel. Inference via the HF Inference API and `huggingface_hub` client for all HAI-DEF model calls (MedGemma 4B IT, MedASR, MedSigLIP, TxGemma 2B).
 
 **Agent framework.** All agents extend `BaseAgent` (abstract base class) providing standardised lifecycle management (`initialize`, `execute`), automatic timing instrumentation, structured error handling, and `AgentResult` return types. The `ClinicalOrchestrator` manages the 6-phase pipeline with phase-aware parallelism -- agents within the same phase execute concurrently; downstream phases await upstream completion.
 
-**Inference architecture.** HAI-DEF models are open-weight and not served by any free hosted inference API. We implement a two-tier inference strategy: (1) Google AI Studio API with `gemma-3-4b-it` for always-available live demonstration, and (2) actual HAI-DEF model weights on GPU infrastructure (Kaggle P100 / Vertex AI / on-premise) for production-grade clinical accuracy. The agent abstraction layer makes this transparent -- agents are agnostic to the inference backend.
+**Inference architecture.** All inference flows through the `InferenceClient` abstraction layer, which manages backend selection transparently. Agents call typed functions (`generate_text`, `analyze_image_text`, `classify_image`, `transcribe_audio`) without knowledge of the serving infrastructure. The same agent code runs against HF Inference API, Vertex AI, or locally hosted HAI-DEF model weights. For deployment on HF Spaces (CPU, free tier), the client routes to the HF Serverless Inference API. For production clinical environments, it connects to on-premise GPU servers running quantised HAI-DEF models, ensuring patient data never leaves the institution's network boundary.
 
 **Output format.** The pipeline produces HL7 FHIR R4 Bundles containing: `Encounter` (visit context), `Composition` (SOAP note sections as XHTML narrative with LOINC section codes), `DiagnosticReport` (imaging findings), `Condition` (one resource per ICD-10 code with proper `http://hl7.org/fhir/sid/icd-10` coding), and `MedicationStatement` (extracted prescriptions). This output integrates directly with FHIR-compliant EHR systems without transformation.
 
 **Deployment.** The backend container starts in <2 seconds, consumes ~50 MB RAM, and requires zero GPU. Total infrastructure cost: $0. For on-premise clinical deployment, the same codebase runs against locally hosted HAI-DEF model weights, ensuring patient data never leaves the institution's network boundary.
 
-**Limitations and future work.** (1) The live demo uses Gemma 3 (same architecture family) rather than MedGemma weights -- production deployment uses actual HAI-DEF models. (2) Clinical validation against gold-standard documentation has not been performed; this is a documentation assistant, not an autonomous clinical agent. (3) The drug interaction checking currently supplements TxGemma with a deterministic rules database for known high-risk combinations. All outputs include appropriate clinical safety disclaimers.
+**Limitations and future work.** (1) Clinical validation against gold-standard documentation has not been performed; this is a documentation assistant, not an autonomous clinical agent. (2) The drug interaction checking supplements TxGemma predictions with a deterministic rules database for known high-risk combinations, ensuring safety even when the model is uncertain. (3) Streaming ASR (real-time transcription via WebSocket) is planned for v3.0. (4) Clinician feedback loops for LoRA fine-tuning are designed but not yet implemented. All outputs include appropriate clinical safety disclaimers.
 
 ---
 
 **Links:**
 
-- **Video:** [TODO -- insert YouTube/Drive link]
+- **Video:** [TODO]
 - **Code:** [github.com/steeltroops-ai/med-gemma](https://github.com/steeltroops-ai/med-gemma)
 - **Live Demo:** [medscribbe.vercel.app](https://medscribbe.vercel.app/)
 - **HF Space (API):** [huggingface.co/spaces/steeltroops-ai/med-gemma](https://huggingface.co/spaces/steeltroops-ai/med-gemma)

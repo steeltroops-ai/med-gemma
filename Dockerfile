@@ -35,9 +35,8 @@ ENV PORT=7860
 ENV PYTHONUNBUFFERED=1
 
 # IMPORTANT: Set secrets in HF Space Settings -> Variables and secrets
-# Required (at least one):
-#   GOOGLE_API_KEY -- Google AI Studio API key (free at aistudio.google.com)
-#   HF_TOKEN       -- Hugging Face token for gated model access
+# Required:
+#   HF_TOKEN       -- Hugging Face token for HAI-DEF model access
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD curl -f http://localhost:7860/health || exit 1
