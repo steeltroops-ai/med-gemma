@@ -108,7 +108,8 @@ export default function Dashboard() {
         }
       }, 6000); // Shift every 6s while running
 
-      const response = await fetch("http://localhost:8000/api/full-pipeline", {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+      const response = await fetch(`${API_BASE}/api/full-pipeline`, {
         method: "POST",
         body: formData,
       });
