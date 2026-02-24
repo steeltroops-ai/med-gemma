@@ -380,28 +380,28 @@ Typed data contracts between all system components using Pydantic models.
 
 ```mermaid
 graph TD
-    subgraph "Input Types"
-        IN1[UploadFile: audio/*]
-        IN2[UploadFile: image/*]
-        IN3[Form: text string]
-        IN4[Form: specialty hint]
+    subgraph Input_Types
+        IN1["UploadFile: audio"]
+        IN2["UploadFile: image"]
+        IN3["Form: text string"]
+        IN4["Form: specialty hint"]
     end
 
-    subgraph "Agent I/O Contracts"
-        TC["TranscriptionAgent<br/>IN: str | path<br/>OUT: str (transcript)"]
-        TRC["TriageAgent<br/>IN: PIL.Image<br/>OUT: {specialty, confidence, scores[]}"]
-        IAC["ImageAnalysisAgent<br/>IN: {image, specialty, prompt?}<br/>OUT: {findings, structured_report}"]
-        CRC["ClinicalReasoningAgent<br/>IN: {transcript, image_findings?, task}<br/>OUT: {soap_note: SOAPNote, icd_codes[], raw_output}"]
-        DIC["DrugInteractionAgent<br/>IN: {soap_text, medications[]?}<br/>OUT: {medications[], interactions[], risk_level}"]
-        QAC["QAAgent<br/>IN: {soap, icd, drugs, fhir}<br/>OUT: {checks[], score, status}"]
+    subgraph Agent_Contracts
+        TC["Transcription Agent"]
+        TRC["Triage Agent"]
+        IAC["Image Analysis Agent"]
+        CRC["Clinical Reasoning Agent"]
+        DIC["Drug Interaction Agent"]
+        QAC["QA Agent"]
     end
 
-    subgraph "Output Types (Pydantic)"
-        AR[AgentResult<br/>agent_name, success, data, error,<br/>processing_time_ms, model_used]
-        SN[SOAPNote<br/>subjective, objective,<br/>assessment, plan]
-        PR[PipelineResponse<br/>transcript, findings, soap,<br/>icd[], fhir, drugs, qa,<br/>metadata[], total_ms]
-        PM[PipelineMetadata<br/>agent_name, success,<br/>time_ms, model, error]
-        FB[FHIR R4 Bundle<br/>Encounter, Composition,<br/>DiagnosticReport, Condition[]]
+    subgraph Output_Types
+        AR["AgentResult"]
+        SN["SOAPNote"]
+        PR["PipelineResponse"]
+        PM["PipelineMetadata"]
+        FB["FHIR R4 Bundle"]
     end
 
     IN1 --> TC
@@ -427,6 +427,17 @@ graph TD
     style PR fill:#0e6251,stroke:#1abc9c,color:#fff
     style FB fill:#7d6608,stroke:#f1c40f,color:#000
 ```
+
+**Agent I/O Contract Details:**
+
+| Agent                  | Input                                 | Output                                           |
+| ---------------------- | ------------------------------------- | ------------------------------------------------ |
+| TranscriptionAgent     | `str` or audio path                   | `str` (transcript)                               |
+| TriageAgent            | `PIL.Image`                           | `{specialty, confidence, scores[]}`              |
+| ImageAnalysisAgent     | `{image, specialty, prompt?}`         | `{findings, structured_report}`                  |
+| ClinicalReasoningAgent | `{transcript, image_findings?, task}` | `{soap_note: SOAPNote, icd_codes[], raw_output}` |
+| DrugInteractionAgent   | `{soap_text, medications[]?}`         | `{medications[], interactions[], risk_level}`    |
+| QAAgent                | `{soap, icd, drugs, fhir}`            | `{checks[], score, status}`                      |
 
 ---
 
