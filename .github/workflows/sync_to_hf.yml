@@ -1,8 +1,8 @@
-name: Sync to Hugging Face Space
+name: Sync Backend to Hugging Face Space
+
 on:
   push:
     branches: [main]
-  # Allows triggering manually
   workflow_dispatch:
 
 jobs:
@@ -13,33 +13,26 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-      - name: Push to Hugging Face Hub
+
+      - name: Push backend to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # Create a temp directory to prepare the HF payload
           mkdir -p hf_space
 
-          # Copy only the files needed for the Docker build on HF
-          cp Dockerfile main.py README.md pyproject.toml hf_space/
-          cp .gitattributes hf_space/ || echo ".gitattributes not found, skipping"
-          [ -f uv.lock ] && cp uv.lock hf_space/ || echo "uv.lock not found, skipping"
+          # Copy only what the Docker build needs
+          cp Dockerfile main.py README.md pyproject.toml requirements.txt hf_space/
+          cp .gitattributes hf_space/ 2>/dev/null || true
           cp -r src hf_space/
-          cp -r demo hf_space/       # Keep if needed for fallback/reference
-          cp -r frontend hf_space/   # Needed because HF Docker will run the build stage
 
-          # Navigate into the clean payload
           cd hf_space
 
-          # Initialize a new git repo for the sync
           git init
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add and commit
           git add .
-          git commit -m "deploy: sync production-ready files"
+          git commit -m "deploy: sync backend $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git branch -M main
 
-          # Force push to HF Space (targeting the main branch of the Space)
           git push -f https://steeltroops-ai:$HF_TOKEN@huggingface.co/spaces/steeltroops-ai/med-gemma main

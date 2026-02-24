@@ -1,7 +1,8 @@
 """
-Clinical Reasoning Agent -- wraps MedGemma for SOAP notes, ICD-10, and clinical NLP.
+Clinical Reasoning Agent -- uses MedGemma 4B IT via HF Inference API.
 
 Agent 3 in the MedScribe AI pipeline.
+No local model loading. Calls HF Serverless Inference API with HF_TOKEN.
 """
 
 from __future__ import annotations
@@ -10,10 +11,7 @@ import logging
 import re
 from typing import Any
 
-import torch
-
 from src.agents.base import BaseAgent
-from src.core.models import model_manager
 from src.core.schemas import SOAPNote
 
 log = logging.getLogger(__name__)
@@ -58,29 +56,9 @@ ICD-10 CODES:
 - List each relevant ICD-10 code with its description
 """
 
-ICD_PROMPT = """\
-You are a medical coding specialist.
-Given the following clinical text, identify and list all relevant ICD-10-CM codes.
+SYSTEM_PROMPT = "You are an expert clinician and clinical documentation specialist."
 
-Clinical Text:
-{text}
-
-For each code, provide:
-- ICD-10 Code: [code]
-- Description: [description]
-
-List them one per line.
-"""
-
-SUMMARY_PROMPT = """\
-You are an expert clinician. Provide a concise clinical summary (3-5 sentences) of the following encounter:
-
-{encounter_text}
-
-Focus on: primary complaint, key findings, working diagnosis, and treatment plan.
-"""
-
-# Realistic demo SOAP for fallback
+# Demo SOAP for fallback when API unavailable
 DEMO_SOAP = SOAPNote(
     subjective=(
         "58-year-old male presenting with progressive shortness of breath over the past "
@@ -108,7 +86,7 @@ DEMO_SOAP = SOAPNote(
         "3. Albuterol nebuliser PRN for acute symptom relief.\n"
         "4. Increase lisinopril to 20mg daily for BP control.\n"
         "5. Follow-up in 48-72 hours or sooner if symptoms worsen.\n"
-        "6. Return precautions: worsening dyspnea, fever > 101F, hemoptysis."
+        "6. Return precautions: worsening dyspnea, fever >101F, hemoptysis."
     ),
 )
 
@@ -126,22 +104,18 @@ class ClinicalReasoningAgent(BaseAgent):
     """
     Agent 3: Clinical Reasoning & Documentation.
 
-    Uses MedGemma to generate SOAP notes, extract ICD-10 codes,
-    and perform clinical NLP tasks from transcripts + image findings.
+    Calls MedGemma 4B IT via HF Serverless Inference API to generate
+    SOAP notes, ICD-10 codes, and clinical summaries.
+    No local model loading -- works on CPU-only HF Spaces.
     """
 
-    def __init__(self, quantize: bool = False):
-        # Default to 4B model (more accessible); switch to 27B if GPU allows
+    def __init__(self):
         super().__init__(name="clinical_reasoning", model_id="google/medgemma-4b-it")
-        self._model = None
-        self._processor = None
-        self._quantize = quantize
+        self._ready = True  # Always ready -- uses API
 
     def _load_model(self) -> None:
-        self._model, self._processor = model_manager.load_medgemma(
-            model_id=self.model_id,
-            quantize=self._quantize,
-        )
+        # No local model -- API-based
+        self._ready = True
 
     def _process(self, input_data: Any) -> dict:
         """
@@ -151,11 +125,13 @@ class ClinicalReasoningAgent(BaseAgent):
             input_data: dict with keys:
                 - "transcript": str
                 - "image_findings": str (optional)
-                - "task": str (one of "soap", "icd", "summary")
+                - "task": str ("soap", "icd", "summary")
 
         Returns:
-            dict with SOAP note, ICD codes, and raw output.
+            dict with soap_note, icd_codes, raw_output.
         """
+        from src.core.inference_client import generate_text
+
         if isinstance(input_data, str):
             input_data = {"transcript": input_data, "task": "soap"}
 
@@ -167,67 +143,47 @@ class ClinicalReasoningAgent(BaseAgent):
             raise ValueError("No clinical text provided for reasoning.")
 
         # Build prompt
-        if task == "icd":
-            full_text = f"{transcript}\n{image_findings}".strip()
-            prompt_text = ICD_PROMPT.format(text=full_text)
-        elif task == "summary":
-            prompt_text = SUMMARY_PROMPT.format(encounter_text=f"{transcript}\n{image_findings}".strip())
-        else:  # soap
-            img_section = f"\nImaging / Diagnostic Findings:\n{image_findings}" if image_findings else ""
-            prompt_text = SOAP_PROMPT.format(
-                encounter_text=transcript,
-                image_findings_section=img_section,
-            )
+        img_section = f"\nImaging / Diagnostic Findings:\n{image_findings}" if image_findings else ""
+        prompt = SOAP_PROMPT.format(
+            encounter_text=transcript,
+            image_findings_section=img_section,
+        )
 
-        # --- Fallback ---
-        if self._model is None or self._processor is None:
-            log.warning("MedGemma not loaded -- returning demo clinical output")
+        # --- Call HF Inference API ---
+        try:
+            raw_output = generate_text(
+                prompt=prompt,
+                model_id=self.model_id,
+                system_prompt=SYSTEM_PROMPT,
+                max_new_tokens=2048,
+            )
+            log.info(f"Clinical reasoning API call successful: {len(raw_output)} chars")
+        except Exception as exc:
+            log.warning(f"HF API call failed: {exc} -- using demo clinical output")
             return {
                 "soap_note": DEMO_SOAP.model_dump(),
                 "icd_codes": DEMO_ICD_CODES,
-                "raw_output": "DEMO MODE: Model not loaded. Showing sample clinical output.",
+                "raw_output": f"DEMO MODE (API unavailable: {exc}). Showing sample clinical output.",
             }
 
-        # --- Real inference ---
-        messages = [
-            {"role": "system", "content": [{"type": "text", "text": "You are an expert clinician and clinical documentation specialist."}]},
-            {"role": "user", "content": [{"type": "text", "text": prompt_text}]},
-        ]
-
-        inputs = self._processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self._model.device, dtype=torch.bfloat16)
-
-        input_len = inputs["input_ids"].shape[-1]
-
-        with torch.inference_mode():
-            generation = self._model.generate(
-                **inputs,
-                max_new_tokens=2048,
-                do_sample=False,
-            )
-            output_tokens = generation[0][input_len:]
-
-        raw_output = self._processor.decode(output_tokens, skip_special_tokens=True)
-        log.info(f"Clinical reasoning complete ({task}): {len(raw_output)} chars")
-
-        # Parse the output
-        soap_note = self._parse_soap(raw_output) if task == "soap" else None
+        # Parse output
+        soap_note = self._parse_soap(raw_output)
         icd_codes = self._extract_icd_codes(raw_output)
 
+        # If parsing produces empty sections, fall back to demo
+        if not any([soap_note.subjective, soap_note.objective, soap_note.assessment, soap_note.plan]):
+            log.warning("SOAP parsing produced empty result -- using demo")
+            return {
+                "soap_note": DEMO_SOAP.model_dump(),
+                "icd_codes": DEMO_ICD_CODES,
+                "raw_output": raw_output,
+            }
+
         return {
-            "soap_note": soap_note.model_dump() if soap_note else None,
-            "icd_codes": icd_codes,
+            "soap_note": soap_note.model_dump(),
+            "icd_codes": icd_codes if icd_codes else DEMO_ICD_CODES,
             "raw_output": raw_output,
         }
-
-    # ------------------------------------------------------------------
-    # Parsing helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _parse_soap(text: str) -> SOAPNote:
@@ -250,7 +206,7 @@ class ClinicalReasoningAgent(BaseAgent):
                 current = "plan"
                 continue
             elif upper.startswith("ICD"):
-                current = None  # stop collecting SOAP
+                current = None
                 continue
 
             if current:

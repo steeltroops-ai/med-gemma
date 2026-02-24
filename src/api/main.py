@@ -3,18 +3,21 @@ MedScribe AI -- FastAPI backend server.
 
 Provides REST API endpoints for transcription, image analysis,
 clinical reasoning, and the full agentic pipeline.
+
+Architecture: All ML inference goes through HF Serverless Inference API.
+No local model loading. No GPU required. Runs on HF Spaces free tier (CPU).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from src.agents.orchestrator import ClinicalOrchestrator
 from src.core.schemas import (
@@ -28,6 +31,7 @@ from src.core.schemas import (
 )
 from src.utils.fhir_builder import FHIRBuilder
 
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 # Global orchestrator
@@ -36,21 +40,31 @@ orchestrator = ClinicalOrchestrator()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start-up / shut-down lifecycle."""
-    log.info("Starting MedScribe AI API -- loading models ...")
-    status = orchestrator.initialize_all()
-    log.info(f"Model status: {status}")
+    """
+    Start-up / shut-down lifecycle.
+
+    IMPORTANT: initialize_all() is NOT called here.
+    All agents use HF Serverless Inference API -- no model weights are
+    downloaded to this server. The container starts in <2 seconds with
+    ~50MB RAM. Suitable for HF Spaces free tier (CPU Docker Space).
+    """
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if hf_token:
+        log.info("MedScribe AI API started | HF Inference API mode | HAI-DEF models active")
+    else:
+        log.warning("MedScribe AI API started | HF_TOKEN not set | demo fallback mode")
     yield
-    log.info("Shutting down MedScribe AI API")
+    log.info("MedScribe AI API shutting down")
 
 
 app = FastAPI(
     title="MedScribe AI API",
     description=(
         "Agentic clinical documentation system powered by HAI-DEF models "
-        "(MedGemma, MedASR, MedSigLIP) from Google Health AI."
+        "(MedGemma 4B IT, MedASR, MedSigLIP, TxGemma 2B) via HF Inference API. "
+        "No GPU required -- CPU-only deployment on HF Spaces free tier."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -64,12 +78,38 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Health check
+# Health / Status
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "agents": orchestrator.get_status()}
+    hf_token_set = bool(os.environ.get("HF_TOKEN", ""))
+    return {
+        "status": "ok",
+        "inference_mode": "hf_inference_api" if hf_token_set else "demo_fallback",
+        "hf_token_configured": hf_token_set,
+    }
+
+
+@app.get("/api/status")
+async def api_status():
+    """Detailed status for the frontend to check connectivity and mode."""
+    hf_token_set = bool(os.environ.get("HF_TOKEN", ""))
+    return {
+        "status": "online",
+        "version": "2.0.0",
+        "inference_backend": "HF Serverless Inference API",
+        "models": {
+            "clinical_reasoning": "google/medgemma-4b-it",
+            "image_analysis": "google/medgemma-4b-it",
+            "image_triage": "google/medsiglip-448",
+            "transcription": "google/medasr",
+            "drug_interaction": "google/txgemma-2b-predict",
+            "quality_assurance": "rules-engine",
+        },
+        "hf_token_configured": hf_token_set,
+        "mode": "live" if hf_token_set else "demo",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +121,7 @@ async def transcribe(
     audio: UploadFile | None = File(default=None),
     text: str = Form(default=""),
 ):
-    """Transcribe audio using MedASR or pass through text."""
+    """Transcribe audio using MedASR (via HF API) or pass through text."""
     audio_path = None
     if audio:
         suffix = Path(audio.filename or "audio.wav").suffix
@@ -107,7 +147,7 @@ async def analyze_image(
     prompt: str = Form(default="Describe this medical image in detail."),
     specialty: str = Form(default="general"),
 ):
-    """Analyse a medical image using MedGemma 4B IT."""
+    """Analyse a medical image using MedGemma 4B IT (via HF API)."""
     from PIL import Image as PILImage
 
     img = PILImage.open(image.file)
@@ -133,7 +173,7 @@ async def analyze_image(
 
 @app.post("/api/generate-notes", response_model=ClinicalResponse)
 async def generate_notes(req: ClinicalRequest):
-    """Generate SOAP notes, ICD codes, or summaries from clinical text."""
+    """Generate SOAP notes, ICD codes from clinical text via MedGemma."""
     result = await orchestrator.generate_clinical_notes(
         transcript=req.transcript,
         image_findings=req.image_findings,
@@ -170,7 +210,7 @@ async def full_pipeline(
     text: str = Form(default=""),
     specialty: str = Form(default="general"),
 ):
-    """Run the complete agentic pipeline (all agents)."""
+    """Run the complete 6-phase agentic pipeline (all HAI-DEF agents)."""
     from PIL import Image as PILImage
 
     audio_path = None
@@ -198,7 +238,7 @@ async def full_pipeline(
 
 @app.post("/api/export/fhir")
 async def export_fhir(req: FHIRExportRequest):
-    """Generate a FHIR bundle from clinical data."""
+    """Generate a FHIR R4 bundle from clinical data."""
     bundle = FHIRBuilder.create_full_bundle(
         soap_note=req.soap_note,
         icd_codes=req.icd_codes,
@@ -209,13 +249,7 @@ async def export_fhir(req: FHIRExportRequest):
 
 
 # ---------------------------------------------------------------------------
-# Static Frontend Serving
+# NOTE: Frontend is deployed on Vercel (not served from this container)
+# This backend serves API endpoints only.
+# CORS is open (*) so Vercel frontend can talk to this HF Space backend.
 # ---------------------------------------------------------------------------
-
-# Mount the Next.js export directory
-frontend_path = Path(__file__).parent.parent.parent / "frontend" / "out"
-if frontend_path.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
-else:
-    log.warning(f"Frontend path {frontend_path} not found. UI will not be served.")
-

@@ -1,8 +1,8 @@
 """
-Drug Interaction Agent -- wraps TxGemma for medication safety checking.
+Drug Interaction Agent -- uses TxGemma 2B via HF Inference API + rule-based fallback.
 
-Validates extracted medications from SOAP notes for drug-drug interactions
-and contraindications. Safety-critical layer in the agentic pipeline.
+Safety-critical layer in the agentic pipeline.
+No local model loading -- works on CPU-only HF Spaces.
 """
 
 from __future__ import annotations
@@ -12,11 +12,10 @@ import re
 from typing import Any
 
 from src.agents.base import BaseAgent
-from src.core.models import model_manager
 
 log = logging.getLogger(__name__)
 
-# Common drug interaction database (deterministic fallback)
+# Deterministic drug interaction database (always available, no API needed)
 KNOWN_INTERACTIONS = {
     ("lisinopril", "potassium"): "HIGH: ACE inhibitors + potassium supplements increase hyperkalemia risk.",
     ("metformin", "contrast dye"): "MODERATE: Hold metformin 48h before/after iodinated contrast.",
@@ -26,14 +25,15 @@ KNOWN_INTERACTIONS = {
     ("lisinopril", "nsaid"): "MODERATE: NSAIDs may reduce ACE inhibitor efficacy and worsen renal function.",
     ("azithromycin", "amiodarone"): "HIGH: QT prolongation risk with concurrent use.",
     ("statin", "grapefruit"): "LOW: Grapefruit may increase statin plasma levels.",
+    ("warfarin", "ciprofloxacin"): "HIGH: Fluoroquinolones increase warfarin anticoagulant effect.",
+    ("metformin", "furosemide"): "MODERATE: Loop diuretics may impair renal function, increase metformin toxicity risk.",
 }
 
-# Demo output
 DEMO_DRUG_CHECK = {
     "medications_found": ["lisinopril 10mg", "metformin 1000mg", "azithromycin 500mg", "albuterol PRN"],
     "interactions": [
         {
-            "drug_pair": ("lisinopril", "metformin"),
+            "drug_pair": ["lisinopril", "metformin"],
             "severity": "LOW",
             "description": "No significant interaction. Both commonly co-prescribed for hypertension + T2DM.",
         },
@@ -46,31 +46,33 @@ DEMO_DRUG_CHECK = {
     "summary": "4 medications identified. No high-severity interactions detected. Standard monitoring recommended.",
 }
 
+DRUG_CHECK_PROMPT = """\
+You are a clinical pharmacist. Given these medications: {med_list}
+
+Check for drug-drug interactions and provide:
+1. Any interactions with severity level (HIGH/MODERATE/LOW)
+2. Any contraindications or warnings
+3. Monitoring recommendations
+
+Be concise and clinically accurate.
+"""
+
 
 class DrugInteractionAgent(BaseAgent):
     """
-    Drug Interaction Agent using TxGemma 2B.
+    Drug Interaction Agent using TxGemma 2B via HF Inference API.
 
-    Extracts medications from clinical text and checks for drug-drug
-    interactions, contraindications, and safety warnings.
+    Primary: calls TxGemma via API for AI-powered drug safety analysis.
+    Fallback: deterministic rule-based interaction database.
+    No local model loading -- works on CPU-only HF Spaces.
     """
 
     def __init__(self):
         super().__init__(name="drug_interaction", model_id="google/txgemma-2b-predict")
-        self._model = None
-        self._processor = None
+        self._ready = True
 
     def _load_model(self) -> None:
-        """Try to load TxGemma; fall back gracefully."""
-        try:
-            self._model, self._processor = model_manager.load_medgemma(
-                model_id=self.model_id,
-                quantize=False,
-            )
-        except Exception as exc:
-            log.warning(f"TxGemma failed to load: {exc} -- using rule-based fallback")
-            self._model = None
-            self._processor = None
+        self._ready = True
 
     def _process(self, input_data: Any) -> dict:
         """
@@ -78,11 +80,11 @@ class DrugInteractionAgent(BaseAgent):
 
         Args:
             input_data: dict with keys:
-                - "medications": list[str] or str of medications
-                - "soap_text": str (optional, full SOAP note to extract meds from)
+                - "medications": list[str] (optional)
+                - "soap_text": str (extract meds from here if medications not provided)
 
         Returns:
-            dict with medications, interactions, warnings, and safety summary.
+            dict with medications_found, interactions, warnings, safe, summary.
         """
         if isinstance(input_data, str):
             input_data = {"soap_text": input_data}
@@ -90,7 +92,6 @@ class DrugInteractionAgent(BaseAgent):
         medications = input_data.get("medications", [])
         soap_text = input_data.get("soap_text", "")
 
-        # Extract medications from text if not provided
         if not medications and soap_text:
             medications = self._extract_medications(soap_text)
 
@@ -103,21 +104,36 @@ class DrugInteractionAgent(BaseAgent):
                 "summary": "No medications found to check.",
             }
 
-        # --- Fallback: rule-based interaction check ---
-        if self._model is None:
-            log.info("Using rule-based drug interaction checking (TxGemma not loaded)")
+        # Try TxGemma API first, fall back to rule-based
+        try:
+            result = self._txgemma_api_check(medications)
+            return result
+        except Exception as exc:
+            log.warning(f"TxGemma API failed: {exc} -- using rule-based fallback")
             return self._rules_based_check(medications)
 
-        # --- TxGemma-based check ---
-        try:
-            return self._txgemma_check(medications)
-        except Exception as exc:
-            log.error(f"TxGemma check failed: {exc} -- falling back to rules")
-            return self._rules_based_check(medications)
+    def _txgemma_api_check(self, medications: list[str]) -> dict:
+        """Call TxGemma 2B via HF Inference API for drug interaction check."""
+        from src.core.inference_client import generate_text
+
+        med_list = ", ".join(medications)
+        prompt = DRUG_CHECK_PROMPT.format(med_list=med_list)
+
+        raw = generate_text(
+            prompt=prompt,
+            model_id=self.model_id,
+            system_prompt="You are a clinical pharmacist specializing in drug-drug interactions.",
+            max_new_tokens=512,
+        )
+        log.info(f"TxGemma API call successful: {len(raw)} chars")
+
+        # Supplement with rule-based check and include TxGemma analysis
+        rules_result = self._rules_based_check(medications)
+        rules_result["txgemma_analysis"] = raw
+        return rules_result
 
     def _extract_medications(self, text: str) -> list[str]:
-        """Extract medication names from clinical text using regex patterns."""
-        # Common medication patterns
+        """Extract medication names from clinical text using regex."""
         patterns = [
             r"\b(lisinopril|metformin|aspirin|atorvastatin|omeprazole|amlodipine|"
             r"metoprolol|losartan|albuterol|prednisone|amoxicillin|azithromycin|"
@@ -125,12 +141,11 @@ class DrugInteractionAgent(BaseAgent):
             r"hydrochlorothiazide|furosemide|warfarin|clopidogrel|apixaban|"
             r"insulin|glipizide|sitagliptin|empagliflozin|semaglutide)\b"
         ]
-        # Also capture "drug name + dosage" patterns
         dose_pattern = r"(\b\w+\b)\s+(\d+\s*(?:mg|mcg|units?|ml)(?:\s*(?:daily|bid|tid|qid|prn|qhs|qam))?)"
 
-        meds = set()
-        for pattern in patterns:
-            for match in re.finditer(pattern, text, re.IGNORECASE):
+        meds: set[str] = set()
+        for pat in patterns:
+            for match in re.finditer(pat, text, re.IGNORECASE):
                 meds.add(match.group(0).lower())
 
         for match in re.finditer(dose_pattern, text, re.IGNORECASE):
@@ -147,7 +162,6 @@ class DrugInteractionAgent(BaseAgent):
         warnings = []
         med_names = [m.split()[0].lower() for m in medications]
 
-        # Check all pairs
         for i, m1 in enumerate(med_names):
             for m2 in med_names[i + 1:]:
                 pair = tuple(sorted([m1, m2]))
@@ -156,18 +170,19 @@ class DrugInteractionAgent(BaseAgent):
                        (known_pair[1] in pair[1] or pair[1] in known_pair[1]):
                         severity = desc.split(":")[0]
                         interactions.append({
-                            "drug_pair": (m1, m2),
+                            "drug_pair": [m1, m2],
                             "severity": severity,
                             "description": desc,
                         })
 
-        # General warnings
         if any("metformin" in m for m in med_names):
             warnings.append("Metformin: monitor renal function (eGFR).")
         if any("lisinopril" in m or "losartan" in m for m in med_names):
             warnings.append("ACE/ARB: monitor potassium and renal function.")
         if any("warfarin" in m for m in med_names):
             warnings.append("Warfarin: monitor INR regularly.")
+        if any("azithromycin" in m for m in med_names):
+            warnings.append("Azithromycin: risk of QT prolongation -- check ECG in high-risk patients.")
 
         has_high = any(i.get("severity") == "HIGH" for i in interactions)
 
@@ -183,50 +198,6 @@ class DrugInteractionAgent(BaseAgent):
                 f"{len(warnings)} monitoring recommendations."
             ),
         }
-
-    def _txgemma_check(self, medications: list[str]) -> dict:
-        """Check interactions using TxGemma model."""
-        import torch
-
-        med_list = ", ".join(medications)
-        prompt = (
-            f"Given these medications: {med_list}\n\n"
-            "Check for drug-drug interactions and provide:\n"
-            "1. List of interactions with severity (HIGH/MODERATE/LOW)\n"
-            "2. Any contraindications\n"
-            "3. Monitoring recommendations\n"
-        )
-
-        messages = [
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        ]
-
-        inputs = self._processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self._model.device)
-
-        input_len = inputs["input_ids"].shape[-1]
-
-        with torch.inference_mode():
-            generation = self._model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=False,
-            )
-            output_tokens = generation[0][input_len:]
-
-        raw = self._processor.decode(output_tokens, skip_special_tokens=True)
-        log.info(f"TxGemma drug check complete: {len(raw)} chars")
-
-        # Parse and also supplement with rule-based checks
-        rules_result = self._rules_based_check(medications)
-        rules_result["txgemma_analysis"] = raw
-
-        return rules_result
 
     def get_demo_result(self) -> dict:
         return DEMO_DRUG_CHECK

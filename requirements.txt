@@ -1,0 +1,24 @@
+# MedScribe AI - Production dependencies
+# Architecture: HF Serverless Inference API (no local model weights)
+# Compatible with HF Spaces free tier (CPU Docker, ~512MB RAM)
+
+# API framework
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+
+# HF Inference API client
+huggingface_hub>=0.24.0
+
+# Image handling (for PIL operations before sending to API)
+Pillow>=10.0.0
+
+# Audio handling (for file reading before sending to MedASR API)
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Utilities
+requests>=2.31.0
+aiofiles>=23.0.0
+python-dotenv>=1.0.0

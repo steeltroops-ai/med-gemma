@@ -1,8 +1,8 @@
 """
-Image Triage Agent -- wraps MedSigLIP for zero-shot medical image classification.
+Image Triage Agent -- uses MedSigLIP via HF Inference API for zero-shot classification.
 
 Routes images to the correct specialty pipeline before detailed analysis.
-This is the AGENTIC ROUTING LAYER that makes the pipeline genuine.
+No local model loading -- works on CPU-only HF Spaces.
 """
 
 from __future__ import annotations
@@ -10,11 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import torch
-from PIL import Image
-
 from src.agents.base import BaseAgent
-from src.core.models import model_manager
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +37,6 @@ LABEL_TO_SPECIALTY = {
     "ultrasound image": "radiology",
 }
 
-# Demo output for when model is unavailable
 DEMO_TRIAGE = {
     "predicted_specialty": "radiology",
     "confidence": 0.87,
@@ -57,24 +52,23 @@ DEMO_TRIAGE = {
 
 class TriageAgent(BaseAgent):
     """
-    Image Triage Agent using MedSigLIP.
+    Image Triage Agent using MedSigLIP zero-shot classification via HF API.
 
-    Performs zero-shot image classification to determine the medical
-    specialty of an uploaded image, then routes it to the appropriate
-    downstream agent (CXR Foundation, Derm Foundation, or MedGemma 4B).
+    Determines the medical specialty of an uploaded image and routes
+    it to the appropriate downstream analysis agent.
+    No local model loading -- works on CPU-only HF Spaces.
     """
 
     def __init__(self):
         super().__init__(name="image_triage", model_id="google/medsiglip-448")
-        self._model = None
-        self._processor = None
+        self._ready = True  # Always ready -- uses API
 
     def _load_model(self) -> None:
-        self._model, self._processor = model_manager.load_medsiglip(self.model_id)
+        self._ready = True
 
     def _process(self, input_data: Any) -> dict:
         """
-        Classify a medical image into a specialty.
+        Classify a medical image into a specialty via HF Inference API.
 
         Args:
             input_data: PIL.Image.Image or dict with "image" key
@@ -82,58 +76,41 @@ class TriageAgent(BaseAgent):
         Returns:
             dict with "predicted_specialty", "confidence", "all_scores"
         """
-        if isinstance(input_data, dict):
-            image = input_data.get("image")
-        elif isinstance(input_data, Image.Image):
+        from src.core.inference_client import classify_image, pil_to_bytes
+        from PIL import Image as PILImage
+
+        if isinstance(input_data, PILImage.Image):
             image = input_data
+        elif isinstance(input_data, dict):
+            image = input_data.get("image")
         else:
             raise ValueError(f"Expected PIL Image or dict, got {type(input_data)}")
 
         if image is None:
             raise ValueError("No image provided for triage.")
 
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-
-        # --- Fallback if model not loaded ---
-        if self._model is None or self._processor is None:
-            log.warning("MedSigLIP not loaded -- returning demo triage result")
-            return DEMO_TRIAGE
-
-        # --- Real zero-shot classification ---
         try:
-            inputs = self._processor(
-                text=SPECIALTY_LABELS,
-                images=image,
-                return_tensors="pt",
-                padding=True,
+            image_bytes = pil_to_bytes(image)
+            results = classify_image(
+                image_bytes=image_bytes,
+                candidate_labels=SPECIALTY_LABELS,
+                model_id=self.model_id,
             )
-            # Move to same device as model
-            device = next(self._model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            # results is list of {"label": str, "score": float} sorted by score desc
+            if not results:
+                return DEMO_TRIAGE
 
-            with torch.inference_mode():
-                outputs = self._model(**inputs)
+            best = results[0]
+            predicted = LABEL_TO_SPECIALTY.get(best["label"], "general")
+            confidence = best["score"]
 
-            # Get logits and softmax
-            logits = outputs.logits_per_image[0]
-            probs = torch.softmax(logits, dim=0).cpu().numpy()
-
-            # Map to specialties
+            # Collapse multiple labels to specialty scores
             specialty_scores: dict[str, float] = {}
-            best_idx = int(probs.argmax())
-            for i, (label, prob) in enumerate(zip(SPECIALTY_LABELS, probs)):
-                specialty = LABEL_TO_SPECIALTY.get(label, "general")
-                specialty_scores[specialty] = max(
-                    specialty_scores.get(specialty, 0.0),
-                    float(prob),
-                )
+            for r in results:
+                sp = LABEL_TO_SPECIALTY.get(r["label"], "general")
+                specialty_scores[sp] = max(specialty_scores.get(sp, 0.0), r["score"])
 
-            predicted = LABEL_TO_SPECIALTY.get(SPECIALTY_LABELS[best_idx], "general")
-            confidence = float(probs[best_idx])
-
-            log.info(f"Image triage: {predicted} ({confidence:.2%})")
-
+            log.info(f"Triage API call successful: {predicted} ({confidence:.2%})")
             return {
                 "predicted_specialty": predicted,
                 "confidence": round(confidence, 4),
@@ -143,7 +120,7 @@ class TriageAgent(BaseAgent):
             }
 
         except Exception as exc:
-            log.error(f"MedSigLIP inference failed: {exc} -- returning demo result")
+            log.warning(f"MedSigLIP API call failed: {exc} -- returning demo triage result")
             return DEMO_TRIAGE
 
     def get_demo_triage(self) -> dict:

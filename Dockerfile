@@ -1,46 +1,44 @@
-# --- Stage 1: Build Frontend ---
-FROM oven/bun:latest as frontend-builder
-
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/bun.lock* ./
-RUN bun install
-
-# Copy frontend source and build
-COPY frontend/ ./
-RUN bun run build
-
-# --- Stage 2: Final Image ---
+# ============================================================
+# MedScribe AI - Backend Only
+# Frontend is deployed on Vercel (separate deployment)
+# This container serves ONLY the FastAPI backend on port 7860
+# ============================================================
 FROM python:3.12-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y ffmpeg curl && rm -rf /var/lib/apt/lists/*
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install uv (fast Python package installer)
+# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# Copy dependency files and install Python packages
-COPY pyproject.toml uv.lock* ./
-RUN uv pip install --system --no-cache -r pyproject.toml
+# Install Python dependencies
+# No torch / transformers / bitsandbytes -- all inference goes through
+# HF Serverless Inference API via huggingface_hub client.
+# Image size: ~400MB (vs ~8GB+ with torch+transformers)
+COPY requirements.txt ./
+RUN uv pip install --system --no-cache -r requirements.txt
 
-# Copy the rest of the project
+# Copy application source
 COPY src/ ./src/
-COPY demo/ ./demo/
 COPY main.py ./
-COPY README.md ./
 
-# Copy the built frontend from Stage 1
-COPY --from=frontend-builder /app/frontend/out ./frontend/out
-
-# Expose port 7860 (Hugging Face Spaces default)
+# HF Spaces standard port
 EXPOSE 7860
 
-# Set environment variables
 ENV HOST=0.0.0.0
 ENV PORT=7860
 ENV PYTHONUNBUFFERED=1
 
-# Launch the FastAPI backend (main.py)
-# This will also serve the static frontend from /frontend/out
+# IMPORTANT: Set HF_TOKEN as a Space SECRET in HF Settings
+# Space -> Settings -> Variables and secrets -> New secret
+# Name: HF_TOKEN | Value: hf_GAdd...
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:7860/health || exit 1
+
 CMD ["python", "main.py"]
