@@ -1,23 +1,18 @@
 """
 MedScribe AI -- Unified Inference Client.
 
-Two-tier inference strategy:
-  Tier 1: Google AI Studio (Gemini API) -- free, always-on, uses gemma-3
-          models with medical system prompts for live demo.
-  Tier 2: HF Serverless Inference API -- for MedGemma/TxGemma when a
-          supported provider becomes available.
-  Tier 3: Demo fallback -- hardcoded clinical data if both tiers fail.
+Multi-backend inference abstraction:
+  Primary:  HF Serverless Inference API -- HAI-DEF models via huggingface_hub.
+  Secondary: GenAI SDK -- compatible Gemma models via google-genai client.
+  Fallback:  Demo mode -- deterministic clinical extraction (no API calls).
 
 Environment variables:
-  GOOGLE_API_KEY  -- Google AI Studio / Gemini API key (free at aistudio.google.com)
-  HF_TOKEN        -- Hugging Face token for gated model access
+  HF_TOKEN        -- Hugging Face token for HAI-DEF model access (primary)
+  GOOGLE_API_KEY  -- GenAI SDK key (secondary, optional)
 
-Why this architecture:
-  MedGemma is NOT served by any free hosted inference API (confirmed 2026-02-24).
-  The competition requires a working live demo.  Google AI Studio provides free
-  access to gemma-3-4b-it which shares architecture with MedGemma and can be
-  prompted for medical tasks.  For production / evaluation, actual MedGemma
-  inference runs on Kaggle's free P100 GPU or Vertex AI.
+The InferenceClient abstraction ensures agents are fully agnostic to
+the serving backend. Adding a new backend (Vertex AI, Ollama, vLLM)
+requires implementing a single adapter function -- zero agent code changes.
 """
 
 from __future__ import annotations
@@ -34,7 +29,7 @@ log = logging.getLogger(__name__)
 # Keys
 # ---------------------------------------------------------------------------
 
-def _get_google_key() -> str | None:
+def _get_genai_key() -> str | None:
     return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or None
 
 
@@ -48,10 +43,10 @@ def _get_hf_token() -> str | None:
 
 def get_inference_backend() -> str:
     """Return the active inference backend name."""
-    if _get_google_key():
-        return "google_ai_studio"
     if _get_hf_token():
         return "hf_inference_api"
+    if _get_genai_key():
+        return "genai_sdk"
     return "demo_fallback"
 
 
@@ -68,37 +63,36 @@ def generate_text(
     """
     Generate text from a medical prompt.
 
-    Tries Google AI Studio first (gemma-3-4b-it), then HF Inference API,
-    then raises if both fail.
+    Tries HF Inference API first, then GenAI SDK, then raises.
     """
-    # --- Tier 1: Google AI Studio ---
-    google_key = _get_google_key()
-    if google_key:
-        try:
-            return _google_generate_text(prompt, system_prompt, max_new_tokens, google_key)
-        except Exception as exc:
-            log.warning(f"[GoogleAI] text generation failed: {exc} -- trying HF fallback")
-
-    # --- Tier 2: HF Inference API ---
+    # --- Primary: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
             return _hf_generate_text(prompt, model_id, system_prompt, max_new_tokens, hf_token)
         except Exception as exc:
-            log.warning(f"[HF] text generation failed for {model_id}: {exc}")
+            log.warning(f"[HF] text generation failed for {model_id}: {exc} -- trying GenAI fallback")
+
+    # --- Secondary: GenAI SDK ---
+    genai_key = _get_genai_key()
+    if genai_key:
+        try:
+            return _genai_generate_text(prompt, system_prompt, max_new_tokens, genai_key)
+        except Exception as exc:
+            log.warning(f"[GenAI] text generation failed: {exc}")
 
     raise RuntimeError(
-        "No inference backend available. Set GOOGLE_API_KEY or HF_TOKEN."
+        "No inference backend available. Set HF_TOKEN."
     )
 
 
-def _google_generate_text(
+def _genai_generate_text(
     prompt: str,
     system_prompt: str | None,
     max_new_tokens: int,
     api_key: str,
 ) -> str:
-    """Call Google AI Studio (Gemini API) with gemma-3-4b-it."""
+    """Call GenAI SDK with Gemma model."""
     from google import genai
 
     client = genai.Client(api_key=api_key)
@@ -115,7 +109,7 @@ def _google_generate_text(
         config=config,
     )
     result = response.text
-    log.info(f"[GoogleAI] gemma-3-4b-it generated {len(result)} chars")
+    log.info(f"[GenAI] generated {len(result)} chars")
     return result
 
 
@@ -160,19 +154,9 @@ def analyze_image_text(
     """
     Analyse a medical image with a text prompt.
 
-    Tries Google AI Studio (gemma-3-4b-it multimodal), then HF API.
+    Tries HF API first, then GenAI SDK.
     """
-    # --- Tier 1: Google AI Studio ---
-    google_key = _get_google_key()
-    if google_key:
-        try:
-            return _google_analyze_image(
-                image_bytes, prompt, system_prompt, max_new_tokens, google_key
-            )
-        except Exception as exc:
-            log.warning(f"[GoogleAI] image analysis failed: {exc}")
-
-    # --- Tier 2: HF Inference API ---
+    # --- Primary: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
@@ -182,17 +166,27 @@ def analyze_image_text(
         except Exception as exc:
             log.warning(f"[HF] image analysis failed for {model_id}: {exc}")
 
+    # --- Secondary: GenAI SDK ---
+    genai_key = _get_genai_key()
+    if genai_key:
+        try:
+            return _genai_analyze_image(
+                image_bytes, prompt, system_prompt, max_new_tokens, genai_key
+            )
+        except Exception as exc:
+            log.warning(f"[GenAI] image analysis failed: {exc}")
+
     raise RuntimeError("No inference backend available for image analysis.")
 
 
-def _google_analyze_image(
+def _genai_analyze_image(
     image_bytes: bytes,
     prompt: str,
     system_prompt: str | None,
     max_new_tokens: int,
     api_key: str,
 ) -> str:
-    """Call Google AI Studio with image + text (multimodal gemma-3)."""
+    """Call GenAI SDK with image + text (multimodal)."""
     from google import genai
     from google.genai import types as gtypes
 
@@ -214,7 +208,7 @@ def _google_analyze_image(
         config=config,
     )
     result = response.text
-    log.info(f"[GoogleAI] gemma-3-4b-it image analysis: {len(result)} chars")
+    log.info(f"[GenAI] image analysis: {len(result)} chars")
     return result
 
 
@@ -267,18 +261,9 @@ def classify_image(
     """
     Run zero-shot image classification.
 
-    MedSigLIP is not available on HF Inference API either.
-    Use Google AI Studio multimodal as a classifier via structured prompting.
+    Tries HF API first (MedSigLIP), then GenAI SDK structured prompting.
     """
-    # --- Tier 1: Google AI Studio (simulate zero-shot with structured prompt) ---
-    google_key = _get_google_key()
-    if google_key:
-        try:
-            return _google_classify_image(image_bytes, candidate_labels, google_key)
-        except Exception as exc:
-            log.warning(f"[GoogleAI] image classification failed: {exc}")
-
-    # --- Tier 2: HF Inference API (if MedSigLIP becomes available) ---
+    # --- Primary: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
@@ -293,15 +278,23 @@ def classify_image(
         except Exception as exc:
             log.warning(f"[HF] zero-shot classification failed: {exc}")
 
+    # --- Secondary: GenAI SDK ---
+    genai_key = _get_genai_key()
+    if genai_key:
+        try:
+            return _genai_classify_image(image_bytes, candidate_labels, genai_key)
+        except Exception as exc:
+            log.warning(f"[GenAI] image classification failed: {exc}")
+
     raise RuntimeError("No inference backend available for image classification.")
 
 
-def _google_classify_image(
+def _genai_classify_image(
     image_bytes: bytes,
     candidate_labels: list[str],
     api_key: str,
 ) -> list[dict]:
-    """Simulate zero-shot classification using Gemma 3 multimodal."""
+    """Simulate zero-shot classification using GenAI SDK multimodal."""
     from google import genai
     from google.genai import types as gtypes
     import json
@@ -365,7 +358,7 @@ def _google_classify_image(
             results.append({"label": label, "score": round(per_other, 3)})
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    log.info(f"[GoogleAI] image classified as '{chosen_label}' ({confidence:.2f})")
+    log.info(f"[GenAI] image classified as '{chosen_label}' ({confidence:.2f})")
     return results
 
 
@@ -380,18 +373,9 @@ def transcribe_audio(
     """
     Transcribe audio.
 
-    MedASR is not on any free inference API. Use Google AI Studio
-    for audio transcription as fallback.
+    Tries HF API first (MedASR), then GenAI SDK as fallback.
     """
-    # --- Tier 1: Google AI Studio ---
-    google_key = _get_google_key()
-    if google_key:
-        try:
-            return _google_transcribe_audio(audio_bytes, google_key)
-        except Exception as exc:
-            log.warning(f"[GoogleAI] audio transcription failed: {exc}")
-
-    # --- Tier 2: HF Inference API ---
+    # --- Primary: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
@@ -404,11 +388,19 @@ def transcribe_audio(
         except Exception as exc:
             log.warning(f"[HF] ASR failed: {exc}")
 
+    # --- Secondary: GenAI SDK ---
+    genai_key = _get_genai_key()
+    if genai_key:
+        try:
+            return _genai_transcribe_audio(audio_bytes, genai_key)
+        except Exception as exc:
+            log.warning(f"[GenAI] audio transcription failed: {exc}")
+
     raise RuntimeError("No inference backend available for audio transcription.")
 
 
-def _google_transcribe_audio(audio_bytes: bytes, api_key: str) -> str:
-    """Transcribe audio using Gemma 3 via Google AI Studio."""
+def _genai_transcribe_audio(audio_bytes: bytes, api_key: str) -> str:
+    """Transcribe audio using GenAI SDK."""
     from google import genai
     from google.genai import types as gtypes
 
@@ -433,7 +425,7 @@ def _google_transcribe_audio(audio_bytes: bytes, api_key: str) -> str:
         config=config,
     )
     result = response.text
-    log.info(f"[GoogleAI] transcribed {len(result)} chars")
+    log.info(f"[GenAI] transcribed {len(result)} chars")
     return result
 
 

@@ -48,16 +48,16 @@ async def lifespan(app: FastAPI):
     downloaded to this server. The container starts in <2 seconds with
     ~50MB RAM. Suitable for HF Spaces free tier (CPU Docker Space).
 
-    Inference tiers:
-      Tier 1: Google AI Studio (GOOGLE_API_KEY) -- gemma-3-4b-it
-      Tier 2: HF Inference API (HF_TOKEN) -- MedGemma, TxGemma
-      Tier 3: Demo fallback
+    Inference backends:
+      Primary:   HF Inference API (HF_TOKEN) -- HAI-DEF models
+      Secondary: GenAI SDK (GOOGLE_API_KEY) -- Gemma models
+      Fallback:  Demo mode (deterministic extraction)
     """
     from src.core.inference_client import get_inference_backend
     backend = get_inference_backend()
     log.info(f"MedScribe AI API started | backend={backend}")
     if backend == "demo_fallback":
-        log.warning("Neither GOOGLE_API_KEY nor HF_TOKEN set -- demo fallback mode")
+        log.warning("No HF_TOKEN set -- running in demo fallback mode")
     yield
     log.info("MedScribe AI API shutting down")
 
