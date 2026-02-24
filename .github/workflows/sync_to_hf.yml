@@ -16,4 +16,27 @@ jobs:
       - name: Push to Hugging Face Hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push https://steeltroops-ai:$HF_TOKEN@huggingface.co/spaces/steeltroops-ai/med-gemma main -f
+        run: |
+          # Create a temp directory to prepare the HF payload
+          mkdir -p hf_space
+
+          # Copy only the files needed for the Docker build on HF
+          cp Dockerfile main.py README.md pyproject.toml uv.lock hf_space/
+          cp -r src hf_space/
+          cp -r demo hf_space/       # Keep if needed for fallback/reference
+          cp -r frontend hf_space/   # Needed because HF Docker will run the build stage
+
+          # Navigate into the clean payload
+          cd hf_space
+
+          # Initialize a new git repo for the sync
+          git init
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          # Add and commit
+          git add .
+          git commit -m "deploy: sync production-ready files"
+
+          # Force push to HF Space (targeting the main branch of the Space)
+          git push -f https://steeltroops-ai:$HF_TOKEN@huggingface.co/spaces/steeltroops-ai/med-gemma main
