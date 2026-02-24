@@ -24,19 +24,50 @@ MedScribe AI orchestrates five HAI-DEF foundation models (MedGemma, MedASR, MedS
 
 ## Architecture
 
-```
-Phase 1 [PARALLEL]:   MedASR Agent -----> Transcript --------\
-                      MedSigLIP Agent --> Specialty Route ----+
-                                                              |
-Phase 2 [ROUTED]:     MedGemma 4B IT --> Image Findings ------+
-                                                              |
-Phase 3 [SEQUENTIAL]: MedGemma 4B IT --> SOAP + ICD-10 -------+
-                                                              |
-Phase 4 [SEQUENTIAL]: TxGemma 2B -----> Drug Interactions ----+
-                                                              |
-Phase 5 [INSTANT]:    QA Rules Engine -> Validation ----------+
-                                                              |
-Phase 6 [INSTANT]:    FHIR Builder ----> HL7 FHIR R4 Bundle --+
+> **[Full Architecture Document (C4 Model, 13 sections, 12 diagrams)](docs/ARCHITECTURE.md)**
+
+```mermaid
+graph LR
+    subgraph Phase 1 - PARALLEL
+        A1[MedASR<br/>Transcription]
+        A2[MedSigLIP<br/>Image Triage]
+    end
+
+    subgraph Phase 2 - ROUTED
+        A3[MedGemma 4B<br/>Image Analysis]
+    end
+
+    subgraph Phase 3 - SEQUENTIAL
+        A4[MedGemma 4B<br/>Clinical Reasoning]
+    end
+
+    subgraph Phase 4 - SEQUENTIAL
+        A5[TxGemma 2B<br/>Drug Safety]
+    end
+
+    subgraph Phases 5-6 - INSTANT
+        A6[QA Engine]
+        A7[FHIR R4<br/>Builder]
+    end
+
+    A1 -->|transcript| A4
+    A2 -->|specialty| A3
+    A3 -->|findings| A4
+    A4 -->|soap + meds| A5
+    A4 -->|soap + icd| A6
+    A5 -->|interactions| A6
+    A4 --> A7
+    A6 --> OUT[PipelineResponse]
+    A7 --> OUT
+
+    style A1 fill:#1a5276,stroke:#2980b9,color:#fff
+    style A2 fill:#1a5276,stroke:#2980b9,color:#fff
+    style A3 fill:#4a235a,stroke:#8e44ad,color:#fff
+    style A4 fill:#4a235a,stroke:#8e44ad,color:#fff
+    style A5 fill:#7b241c,stroke:#e74c3c,color:#fff
+    style A6 fill:#1e8449,stroke:#27ae60,color:#fff
+    style A7 fill:#1e8449,stroke:#27ae60,color:#fff
+    style OUT fill:#212f3d,stroke:#5d6d7e,color:#fff
 ```
 
 ## HAI-DEF Models Used
