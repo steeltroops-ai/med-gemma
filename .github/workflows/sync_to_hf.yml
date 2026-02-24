@@ -22,6 +22,7 @@ jobs:
 
           # Copy only the files needed for the Docker build on HF
           cp Dockerfile main.py README.md pyproject.toml hf_space/
+          cp .gitattributes hf_space/ || echo ".gitattributes not found, skipping"
           [ -f uv.lock ] && cp uv.lock hf_space/ || echo "uv.lock not found, skipping"
           cp -r src hf_space/
           cp -r demo hf_space/       # Keep if needed for fallback/reference
