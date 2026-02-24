@@ -15,6 +15,7 @@ Architecture reference: docs/ARCHITECTURE.md Section 4
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -133,7 +134,7 @@ class BaseAgent(ABC):
                     f"Agent '{self.name}' not initialised "
                     "-- running in fallback/demo mode."
                 )
-            result = self._process(input_data)
+            result = await asyncio.to_thread(self._process, input_data)
             elapsed_ms = (time.perf_counter() - start) * 1000
             self._total_time_ms += elapsed_ms
             self._last_execution_ms = elapsed_ms

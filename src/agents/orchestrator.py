@@ -1,13 +1,16 @@
 """
 Clinical Orchestrator -- coordinates all agents in the MedScribe AI pipeline.
 
-Upgraded to 7 agents across 6 pipeline phases:
-  Phase 1: Intake       -- MedASR (transcription) + MedSigLIP (image triage)  [PARALLEL]
-  Phase 2: Specialty    -- MedGemma 4B (image analysis, routed by triage)     [PARALLEL]
-  Phase 3: Reasoning    -- MedGemma (clinical reasoning, SOAP, ICD-10)        [SEQUENTIAL]
-  Phase 4: Drug Safety  -- TxGemma (drug interaction check)                   [SEQUENTIAL]
-  Phase 5: QA           -- Rules engine (document validation)                 [INSTANT]
-  Phase 6: Assembly     -- FHIR bundle generation                             [INSTANT]
+Cognitively Routed State Machine:
+  Node: INTAKE       -- MedASR (transcription) + MedSigLIP (image triage)
+  Node: ROUTING      -- MedGemma 4B (image analysis, routed by triage)
+  Node: REASONING    -- MedGemma (clinical reasoning, SOAP, ICD-10)
+  Node: SAFETY       -- TxGemma (pharmacological interaction check)
+  Node: QA           -- Rules engine (document validation)
+  Node: ASSEMBLY     -- FHIR bundle generation
+
+This architecture implements deterministic supervision over agentic tools,
+preventing unconstrained ReAct loop hallucinations in clinical settings.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import TypedDict, Any
 
 from PIL import Image
 
@@ -125,193 +129,201 @@ class ClinicalOrchestrator:
         metadata: list[PipelineMetadata] = []
 
         # =============================================================
-        # PHASE 1: INTAKE (Parallel -- Transcription + Image Triage)
+        # COGNITIVELY ROUTED STATE MACHINE
+        # Replaces linear execution with a state graph topology
         # =============================================================
-        log.info("PHASE 1: Intake (transcription + image triage)")
-
-        tasks = []
-        task_names = []
-
-        # Transcription task
-        transcription_input = {"text": text_input} if text_input else audio_path
-        tasks.append(self.transcription.execute(transcription_input))
-        task_names.append("transcription")
-
-        # Image triage task (if image provided)
-        if image is not None:
-            tasks.append(self.triage.execute(image))
-            task_names.append("triage")
-
-        phase1_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process Phase 1 results
-        transcript = None
-        triage_result = None
-        detected_specialty = specialty
-
-        for name, result in zip(task_names, phase1_results):
-            if isinstance(result, Exception):
-                log.error(f"Phase 1 agent '{name}' raised: {result}")
-                metadata.append(PipelineMetadata(
-                    agent_name=name, success=False, processing_time_ms=0,
-                    model_used="error", error=str(result),
-                ))
-                continue
-
-            metadata.append(PipelineMetadata(
-                agent_name=result.agent_name, success=result.success,
-                processing_time_ms=result.processing_time_ms,
-                model_used=result.model_used, error=result.error,
-            ))
-
-            if name == "transcription" and result.success:
-                transcript = result.data
-            elif name == "triage" and result.success and isinstance(result.data, dict):
-                triage_result = result.data
-                detected_specialty = triage_result.get("predicted_specialty", specialty)
-                log.info(f"Image triage -> {detected_specialty} "
-                         f"({triage_result.get('confidence', 0):.1%})")
-
-        # =============================================================
-        # PHASE 2: SPECIALTY ANALYSIS (Image analysis with routed specialty)
-        # =============================================================
-        image_findings = None
-        if image is not None:
-            log.info(f"PHASE 2: Specialty Analysis ({detected_specialty})")
-            img_result = await self.image_analysis.execute({
-                "image": image,
-                "specialty": detected_specialty,
-            })
-            metadata.append(PipelineMetadata(
-                agent_name=img_result.agent_name, success=img_result.success,
-                processing_time_ms=img_result.processing_time_ms,
-                model_used=img_result.model_used, error=img_result.error,
-            ))
-            if img_result.success and isinstance(img_result.data, dict):
-                image_findings = img_result.data.get("findings")
-
-        # =============================================================
-        # PHASE 3: CLINICAL REASONING (Sequential -- needs Phase 1+2)
-        # =============================================================
-        log.info("PHASE 3: Clinical Reasoning")
-        soap_note = None
-        icd_codes: list[str] = []
-
-        clinical_result = await self.clinical_reasoning.execute({
-            "transcript": transcript or text_input or "",
-            "image_findings": image_findings,
-            "triage_info": triage_result,
-            "task": "soap",
-        })
-        metadata.append(PipelineMetadata(
-            agent_name=clinical_result.agent_name, success=clinical_result.success,
-            processing_time_ms=clinical_result.processing_time_ms,
-            model_used=clinical_result.model_used, error=clinical_result.error,
-        ))
-
-        if clinical_result.success and isinstance(clinical_result.data, dict):
-            soap_dict = clinical_result.data.get("soap_note")
-            if isinstance(soap_dict, dict):
-                soap_note = SOAPNote(**soap_dict)
-            elif isinstance(soap_dict, SOAPNote):
-                soap_note = soap_dict
-            icd_codes = clinical_result.data.get("icd_codes", [])
-
-        # =============================================================
-        # PHASE 4: DRUG SAFETY (Sequential -- needs SOAP note)
-        # =============================================================
-        log.info("PHASE 4: Drug Safety Check")
-        drug_check = None
-
-        # Feed both SOAP plan and original transcript for max medication coverage
-        drug_text_parts = []
-        if soap_note:
-            drug_text_parts.append(soap_note.plan)
-            drug_text_parts.append(soap_note.objective)
-        if transcript:
-            drug_text_parts.append(transcript)
-        elif text_input:
-            drug_text_parts.append(text_input)
-
-        drug_input = {"soap_text": "\n".join(drug_text_parts)}
-        drug_result = await self.drug_interaction.execute(drug_input)
-        metadata.append(PipelineMetadata(
-            agent_name=drug_result.agent_name, success=drug_result.success,
-            processing_time_ms=drug_result.processing_time_ms,
-            model_used=drug_result.model_used, error=drug_result.error,
-        ))
-        if drug_result.success:
-            drug_check = drug_result.data
-
-        # =============================================================
-        # PHASE 5: QUALITY ASSURANCE (Instant -- all inputs ready)
-        # =============================================================
-        log.info("PHASE 5: Quality Assurance")
-        fhir_bundle = None
-        qa_result_data = None
-
-        # Extract medication list for FHIR MedicationStatement resources
-        medications_for_fhir: list[str] = []
-        if drug_check and isinstance(drug_check, dict):
-            meds_found = drug_check.get("medications_found", [])
-            if isinstance(meds_found, list):
-                medications_for_fhir = meds_found
-
-        # Build agent execution chain for Provenance resource
-        agent_chain = [
-            {"agent_name": m.agent_name, "model_used": m.model_used}
-            for m in metadata
-        ]
-
-        # Build FHIR bundle with medications and provenance
-        if soap_note:
-            fhir_bundle = FHIRBuilder.create_full_bundle(
-                soap_note=soap_note,
-                icd_codes=icd_codes,
-                image_findings=image_findings,
-                medications=medications_for_fhir,
-                agent_chain=agent_chain,
-            )
-
-        qa_input = {
-            "soap_note": soap_note,
-            "icd_codes": icd_codes,
-            "drug_check": drug_check,
-            "fhir_bundle": fhir_bundle,
+        
+        state: dict[str, Any] = {
+            "current_node": "INTAKE",
+            "audio_path": audio_path,
+            "image": image,
+            "text_input": text_input,
+            "specialty": specialty,
+            "transcript": None,
+            "triage_result": None,
+            "image_findings": None,
+            "soap_note": None,
+            "icd_codes": [],
+            "drug_check": None,
+            "qa_result_data": None,
+            "fhir_bundle": None,
+            "raw_clinical": "",
+            "metadata": metadata
         }
-        qa_result = await self.qa.execute(qa_input)
-        metadata.append(PipelineMetadata(
-            agent_name=qa_result.agent_name, success=qa_result.success,
-            processing_time_ms=qa_result.processing_time_ms,
-            model_used=qa_result.model_used, error=qa_result.error,
-        ))
-        if qa_result.success:
-            qa_result_data = qa_result.data
 
-        # =============================================================
-        # PHASE 6: ASSEMBLY (Complete -- build response)
-        # =============================================================
-        total_ms = (time.perf_counter() - pipeline_start) * 1000
+        # Deterministic Supervisor Loop (State Graph Router)
+        while state["current_node"] != "END":
+            
+            if state["current_node"] == "INTAKE":
+                log.info("Executing Node: INTAKE (Parallel MedASR + MedSigLIP)")
+                tasks = []
+                task_names = []
 
-        # Build raw clinical output string for downstream consumers
-        raw_clinical = ""
-        if clinical_result.success and isinstance(clinical_result.data, dict):
-            raw_clinical = clinical_result.data.get("raw_output", "")
+                transcription_input = {"text": state["text_input"]} if state["text_input"] else state["audio_path"]
+                tasks.append(self.transcription.execute(transcription_input))
+                task_names.append("transcription")
 
-        log.info(f"PHASE 6: Assembly complete | {total_ms:.0f}ms total | "
-                 f"{len(metadata)} agents executed")
+                if state["image"] is not None:
+                    tasks.append(self.triage.execute(state["image"]))
+                    task_names.append("triage")
+
+                phase1_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for name, result in zip(task_names, phase1_results):
+                    if isinstance(result, Exception):
+                        log.error(f"Node 'INTAKE' agent '{name}' raised: {result}")
+                        state["metadata"].append(PipelineMetadata(
+                            agent_name=name, success=False, processing_time_ms=0,
+                            model_used="error", error=str(result),
+                        ))
+                        continue
+
+                    state["metadata"].append(PipelineMetadata(
+                        agent_name=result.agent_name, success=result.success,
+                        processing_time_ms=result.processing_time_ms,
+                        model_used=result.model_used, error=result.error,
+                    ))
+
+                    if name == "transcription" and result.success:
+                        state["transcript"] = result.data
+                    elif name == "triage" and result.success and isinstance(result.data, dict):
+                        state["triage_result"] = result.data
+                        state["specialty"] = result.data.get("predicted_specialty", state["specialty"])
+                        log.info(f"Image triage -> {state['specialty']} "
+                                 f"({result.data.get('confidence', 0):.1%})")
+
+                # State Routing Logic
+                if state["image"] is not None:
+                    state["current_node"] = "ROUTING"
+                else:
+                    state["current_node"] = "REASONING"
+
+            elif state["current_node"] == "ROUTING":
+                log.info(f"Executing Node: ROUTING ({state['specialty']})")
+                img_result = await self.image_analysis.execute({
+                    "image": state["image"],
+                    "specialty": state["specialty"],
+                })
+                state["metadata"].append(PipelineMetadata(
+                    agent_name=img_result.agent_name, success=img_result.success,
+                    processing_time_ms=img_result.processing_time_ms,
+                    model_used=img_result.model_used, error=img_result.error,
+                ))
+                if img_result.success and isinstance(img_result.data, dict):
+                    state["image_findings"] = img_result.data.get("findings")
+                
+                # Advance Graph
+                state["current_node"] = "REASONING"
+
+            elif state["current_node"] == "REASONING":
+                log.info("Executing Node: REASONING (MedGemma Core)")
+                clinical_result = await self.clinical_reasoning.execute({
+                    "transcript": state["transcript"] or state["text_input"] or "",
+                    "image_findings": state["image_findings"],
+                    "triage_info": state["triage_result"],
+                    "task": "soap",
+                })
+                state["metadata"].append(PipelineMetadata(
+                    agent_name=clinical_result.agent_name, success=clinical_result.success,
+                    processing_time_ms=clinical_result.processing_time_ms,
+                    model_used=clinical_result.model_used, error=clinical_result.error,
+                ))
+
+                if clinical_result.success and isinstance(clinical_result.data, dict):
+                    soap_dict = clinical_result.data.get("soap_note")
+                    if isinstance(soap_dict, dict):
+                        state["soap_note"] = SOAPNote(**soap_dict)
+                    elif isinstance(soap_dict, SOAPNote):
+                        state["soap_note"] = soap_dict
+                    state["icd_codes"] = clinical_result.data.get("icd_codes", [])
+                    state["raw_clinical"] = clinical_result.data.get("raw_output", "")
+                
+                # Advance Graph
+                state["current_node"] = "SAFETY"
+
+            elif state["current_node"] == "SAFETY":
+                log.info("Executing Node: SAFETY (TxGemma 2B Interaction Verification)")
+                drug_text_parts = []
+                if state["soap_note"]:
+                    drug_text_parts.append(state["soap_note"].plan)
+                    drug_text_parts.append(state["soap_note"].objective)
+                if state["transcript"]:
+                    drug_text_parts.append(state["transcript"])
+                elif state["text_input"]:
+                    drug_text_parts.append(state["text_input"])
+
+                drug_input = {"soap_text": "\n".join(drug_text_parts)}
+                drug_result = await self.drug_interaction.execute(drug_input)
+                
+                state["metadata"].append(PipelineMetadata(
+                    agent_name=drug_result.agent_name, success=drug_result.success,
+                    processing_time_ms=drug_result.processing_time_ms,
+                    model_used=drug_result.model_used, error=drug_result.error,
+                ))
+                if drug_result.success:
+                    state["drug_check"] = drug_result.data
+                
+                # Advance Graph
+                state["current_node"] = "QA"
+
+            elif state["current_node"] == "QA":
+                log.info("Executing Node: QA (Completeness & Security)")
+                medications_for_fhir: list[str] = []
+                if state["drug_check"] and isinstance(state["drug_check"], dict):
+                    meds_found = state["drug_check"].get("medications_found", [])
+                    if isinstance(meds_found, list):
+                        medications_for_fhir = meds_found
+
+                agent_chain = [
+                    {"agent_name": m.agent_name, "model_used": m.model_used}
+                    for m in state["metadata"]
+                ]
+
+                if state["soap_note"]:
+                    state["fhir_bundle"] = FHIRBuilder.create_full_bundle(
+                        soap_note=state["soap_note"],
+                        icd_codes=state["icd_codes"],
+                        image_findings=state["image_findings"],
+                        medications=medications_for_fhir,
+                        agent_chain=agent_chain,
+                    )
+
+                qa_input = {
+                    "soap_note": state["soap_note"],
+                    "icd_codes": state["icd_codes"],
+                    "drug_check": state["drug_check"],
+                    "fhir_bundle": state["fhir_bundle"],
+                }
+                qa_result = await self.qa.execute(qa_input)
+                state["metadata"].append(PipelineMetadata(
+                    agent_name=qa_result.agent_name, success=qa_result.success,
+                    processing_time_ms=qa_result.processing_time_ms,
+                    model_used=qa_result.model_used, error=qa_result.error,
+                ))
+                if qa_result.success:
+                    state["qa_result_data"] = qa_result.data
+                
+                # Advance Graph
+                state["current_node"] = "ASSEMBLY"
+
+            elif state["current_node"] == "ASSEMBLY":
+                total_ms = (time.perf_counter() - pipeline_start) * 1000
+                log.info(f"Node ASSEMBLY Complete | {total_ms:.0f}ms | State Terminated")
+                
+                # Terminal state exit
+                state["current_node"] = "END"
 
         return PipelineResponse(
-            transcript=transcript,
-            image_findings=image_findings,
-            soap_note=soap_note,
-            icd_codes=icd_codes,
-            fhir_bundle=fhir_bundle,
-            drug_interactions=drug_check,
-            quality_report=qa_result_data,
-            triage_result=triage_result,
-            raw_clinical_output=raw_clinical,
-            pipeline_metadata=metadata,
+            transcript=state["transcript"],
+            image_findings=state["image_findings"],
+            soap_note=state["soap_note"],
+            icd_codes=state["icd_codes"],
+            fhir_bundle=state["fhir_bundle"],
+            drug_interactions=state["drug_check"],
+            quality_report=state["qa_result_data"],
+            triage_result=state["triage_result"],
+            raw_clinical_output=state["raw_clinical"],
+            pipeline_metadata=state["metadata"],
             total_processing_time_ms=round(total_ms, 1),
         )
 

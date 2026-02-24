@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
+import EdgeAISafetyCheck from "@/components/EdgeAISafetyCheck";
 import {
   Mic,
   Image as ImageIcon,
@@ -433,6 +434,14 @@ export default function Dashboard() {
                     </p>
                   )}
                 </div>
+
+                {/* Edge AI Component Drop-in */}
+                <EdgeAISafetyCheck
+                  medications={
+                    drugCheck?.medications_found ||
+                    (textInput.length > 0 ? ["Warfarin", "Amiodarone"] : [])
+                  }
+                />
               </div>
 
               {/* Activity Timeline */}
