@@ -11,6 +11,10 @@ pydantic>=2.0.0
 # HF Inference API client
 huggingface_hub>=0.24.0
 
+# Google AI Studio (Gemini API) -- Tier 1 inference backend
+# Provides free access to gemma-3-4b-it for live demo
+google-genai>=1.0.0
+
 # Image handling (for PIL operations before sending to API)
 Pillow>=10.0.0
 

@@ -44,15 +44,20 @@ async def lifespan(app: FastAPI):
     Start-up / shut-down lifecycle.
 
     IMPORTANT: initialize_all() is NOT called here.
-    All agents use HF Serverless Inference API -- no model weights are
+    All agents use external inference APIs -- no model weights are
     downloaded to this server. The container starts in <2 seconds with
     ~50MB RAM. Suitable for HF Spaces free tier (CPU Docker Space).
+
+    Inference tiers:
+      Tier 1: Google AI Studio (GOOGLE_API_KEY) -- gemma-3-4b-it
+      Tier 2: HF Inference API (HF_TOKEN) -- MedGemma, TxGemma
+      Tier 3: Demo fallback
     """
-    hf_token = os.environ.get("HF_TOKEN", "")
-    if hf_token:
-        log.info("MedScribe AI API started | HF Inference API mode | HAI-DEF models active")
-    else:
-        log.warning("MedScribe AI API started | HF_TOKEN not set | demo fallback mode")
+    from src.core.inference_client import get_inference_backend
+    backend = get_inference_backend()
+    log.info(f"MedScribe AI API started | backend={backend}")
+    if backend == "demo_fallback":
+        log.warning("Neither GOOGLE_API_KEY nor HF_TOKEN set -- demo fallback mode")
     yield
     log.info("MedScribe AI API shutting down")
 
@@ -83,32 +88,36 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    hf_token_set = bool(os.environ.get("HF_TOKEN", ""))
+    from src.core.inference_client import get_inference_backend
+    backend = get_inference_backend()
     return {
         "status": "ok",
-        "inference_mode": "hf_inference_api" if hf_token_set else "demo_fallback",
-        "hf_token_configured": hf_token_set,
+        "inference_backend": backend,
+        "google_api_configured": bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")),
+        "hf_token_configured": bool(os.environ.get("HF_TOKEN", "")),
     }
 
 
 @app.get("/api/status")
 async def api_status():
     """Detailed status for the frontend to check connectivity and mode."""
-    hf_token_set = bool(os.environ.get("HF_TOKEN", ""))
+    from src.core.inference_client import get_inference_backend
+    backend = get_inference_backend()
     return {
         "status": "online",
-        "version": "2.0.0",
-        "inference_backend": "HF Serverless Inference API",
+        "version": "2.1.0",
+        "inference_backend": backend,
         "models": {
-            "clinical_reasoning": "google/medgemma-4b-it",
-            "image_analysis": "google/medgemma-4b-it",
-            "image_triage": "google/medsiglip-448",
-            "transcription": "google/medasr",
-            "drug_interaction": "google/txgemma-2b-predict",
+            "clinical_reasoning": "gemma-3-4b-it (via Google AI Studio)" if backend == "google_ai_studio" else "google/medgemma-4b-it",
+            "image_analysis": "gemma-3-4b-it (via Google AI Studio)" if backend == "google_ai_studio" else "google/medgemma-4b-it",
+            "image_triage": "gemma-3-4b-it (structured classification)" if backend == "google_ai_studio" else "google/medsiglip-448",
+            "transcription": "gemma-3-4b-it (audio)" if backend == "google_ai_studio" else "google/medasr",
+            "drug_interaction": "gemma-3-4b-it (drug safety)" if backend == "google_ai_studio" else "google/txgemma-2b-predict",
             "quality_assurance": "rules-engine",
         },
-        "hf_token_configured": hf_token_set,
-        "mode": "live" if hf_token_set else "demo",
+        "google_api_configured": bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")),
+        "hf_token_configured": bool(os.environ.get("HF_TOKEN", "")),
+        "mode": "live" if backend != "demo_fallback" else "demo",
     }
 
 

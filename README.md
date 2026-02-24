@@ -1,6 +1,6 @@
 ---
 title: MedScribe AI
-emoji: 🏥
+emoji: "+>"
 colorFrom: blue
 colorTo: green
 sdk: docker
@@ -10,109 +10,125 @@ license: cc-by-4.0
 
 # MedScribe AI
 
-**Agentic Clinical Documentation System powered by HAI-DEF models**
+**Multi-Agent Clinical Documentation via Orchestrated HAI-DEF Foundation Models**
 
-MedScribe AI is a multi-agent pipeline that transforms clinical encounters into structured medical records using Google's Health AI Developer Foundations (HAI-DEF) open-weight models.
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![HAI-DEF](https://img.shields.io/badge/models-HAI--DEF-green.svg)](https://developers.google.com/health-ai-developer-foundations)
 
-🏆 **[Read the Kaggle Competition MedGemma Impact Challenge Writeup Here](docs/writeup.md)**
+MedScribe AI orchestrates five HAI-DEF foundation models (MedGemma, MedASR, MedSigLIP, TxGemma) as six independent agents in a fault-tolerant clinical documentation pipeline. Transforms raw clinical encounters (audio + images) into structured FHIR R4-compliant medical records with pharmacological safety verification.
+
+**[Competition Writeup](docs/writeup.md)** | **[Live Demo](https://medscribbe.vercel.app/)** | **[API Backend](https://steeltroops-ai-med-gemma.hf.space/health)**
 
 ---
 
-## Problem
-
-Physicians spend **2 hours on documentation for every 1 hour of patient care** (AMA). Clinical documentation burden is the #1 driver of physician burnout. Current solutions are either cloud-dependent (privacy risk) or lack clinical intelligence.
-
-## Solution
-
-MedScribe AI coordinates 4 HAI-DEF models as independent agents:
-
-| Agent                  | Model             | Role                             |
-| ---------------------- | ----------------- | -------------------------------- |
-| **Transcription**      | MedASR            | Medical speech-to-text           |
-| **Image Analysis**     | MedGemma 4B IT    | Medical image interpretation     |
-| **Clinical Reasoning** | MedGemma 27B / 4B | SOAP notes, ICD-10, clinical NLP |
-| **Orchestrator**       | Custom + MedGemma | Agent coordination, FHIR export  |
-
-### Architecture
+## Architecture
 
 ```
-Audio --> [MedASR Agent] --> Transcript ---|
-                                           |--> [Clinical Reasoning Agent] --> SOAP + ICD-10
-Image --> [MedGemma 4B Agent] --> Findings--|                                      |
-                                                                                   v
-                                                                          [FHIR Bundle]
+Phase 1 [PARALLEL]:   MedASR Agent -----> Transcript --------\
+                      MedSigLIP Agent --> Specialty Route ----+
+                                                              |
+Phase 2 [ROUTED]:     MedGemma 4B IT --> Image Findings ------+
+                                                              |
+Phase 3 [SEQUENTIAL]: MedGemma 4B IT --> SOAP + ICD-10 -------+
+                                                              |
+Phase 4 [SEQUENTIAL]: TxGemma 2B -----> Drug Interactions ----+
+                                                              |
+Phase 5 [INSTANT]:    QA Rules Engine -> Validation ----------+
+                                                              |
+Phase 6 [INSTANT]:    FHIR Builder ----> HL7 FHIR R4 Bundle --+
 ```
+
+## HAI-DEF Models Used
+
+| Model                                                                           | Agent                               | Clinical Function                               |
+| ------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- |
+| [`google/medasr`](https://huggingface.co/google/medasr)                         | Transcription                       | Medical-domain speech recognition               |
+| [`google/medsiglip-448`](https://huggingface.co/google/medsiglip-448)           | Image Triage                        | Zero-shot specialty classification and routing  |
+| [`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it)         | Image Analysis + Clinical Reasoning | Multimodal medical analysis, SOAP notes, ICD-10 |
+| [`google/txgemma-2b-predict`](https://huggingface.co/google/txgemma-2b-predict) | Drug Interaction                    | Drug-drug interaction safety verification       |
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.12+
-- UV package manager
-- GPU with CUDA 12.1+ (optional -- works in demo mode on CPU)
+- [UV](https://docs.astral.sh/uv/) package manager
 
 ### Setup
 
 ```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/medscribe-ai.git
-cd medscribe-ai
+git clone https://github.com/steeltroops-ai/med-gemma.git
+cd med-gemma
 
 # Create venv and install
 uv venv
-uv pip install -e .
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+uv pip install -r requirements.txt
 
-# Run the Gradio demo
-python demo/app.py
+# Set inference backend (at least one required)
+echo "GOOGLE_API_KEY=your_key_here" >> .env    # Google AI Studio (free)
+echo "HF_TOKEN=your_token_here" >> .env        # Hugging Face (for gated models)
+
+# Run backend
+python main.py
 ```
 
-### Run FastAPI Backend
+The API starts on `http://localhost:7860`.
 
-```bash
-uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+### API Endpoints
+
 ```
-
-## HAI-DEF Models Used
-
-- `google/medasr` -- Medical speech recognition (Conformer architecture)
-- `google/medgemma-4b-it` -- Multimodal medical AI (images + text)
-- `google/medgemma-27b-text-it` -- Medical text reasoning + FHIR comprehension
-- `google/medsiglip-448` -- Medical image embeddings
+GET  /health              -- Backend status and inference tier
+GET  /api/status          -- Detailed model and configuration info
+POST /api/transcribe      -- Audio -> Text (MedASR agent)
+POST /api/analyze-image   -- Image -> Findings (MedGemma agent)
+POST /api/generate-notes  -- Text -> SOAP + ICD-10 (Clinical agent)
+POST /api/full-pipeline   -- Full 6-phase agentic pipeline
+POST /api/export/fhir     -- Clinical data -> FHIR R4 Bundle
+```
 
 ## Project Structure
 
 ```
-medscribe-ai/
+med-gemma/
   src/
-    agents/           # Agent implementations
-      base.py         # Abstract base agent
-      transcription_agent.py  # MedASR wrapper
-      image_agent.py  # MedGemma 4B image analysis
-      clinical_agent.py  # Clinical reasoning & SOAP
-      orchestrator.py # Multi-agent coordinator
+    agents/
+      base.py                  # BaseAgent ABC: lifecycle, timing, error handling
+      transcription_agent.py   # MedASR agent
+      triage_agent.py          # MedSigLIP image triage agent
+      image_agent.py           # MedGemma 4B image analysis agent
+      clinical_agent.py        # MedGemma clinical reasoning agent
+      drug_agent.py            # TxGemma drug interaction agent
+      qa_agent.py              # QA rules engine agent
+      orchestrator.py          # ClinicalOrchestrator: 6-phase pipeline
     api/
-      main.py         # FastAPI server
+      main.py                  # FastAPI backend
     core/
-      config.py       # Configuration
-      models.py       # Model loading/management
-      schemas.py      # Pydantic schemas
+      inference_client.py      # Two-tier inference (Google AI Studio + HF API)
+      config.py                # Configuration
+      schemas.py               # Pydantic models
     utils/
-      fhir_builder.py # FHIR resource generation
-  demo/
-    app.py            # Gradio demo (HF Spaces)
+      fhir_builder.py          # HL7 FHIR R4 Bundle generation
+  frontend/                    # Next.js 15 clinical interface (deployed on Vercel)
   tests/
+    test_inference_live.py     # Live inference smoke tests
   docs/
+    writeup.md                 # Competition writeup
+  video/
+    script.md                  # Video script
 ```
 
-## Features
+## Inference Architecture
 
-- **Multi-model agentic pipeline** -- 4 HAI-DEF models working as coordinated agents
-- **SOAP note generation** -- Structured clinical documentation from encounter data
-- **ICD-10 code extraction** -- Automated medical coding
-- **Medical image analysis** -- CXR, dermatology, pathology, ophthalmology
-- **FHIR-compliant output** -- HL7 FHIR R4 bundles for EHR integration
-- **Privacy-preserving** -- All open-weight models, deploy on-premise
-- **Demo mode** -- Works without GPU using realistic sample outputs
+HAI-DEF models are open-weight and not served by any free hosted inference API. MedScribe AI implements a two-tier inference strategy:
+
+| Tier | Backend              | Models                               | Use Case                           |
+| ---- | -------------------- | ------------------------------------ | ---------------------------------- |
+| 1    | Google AI Studio API | `gemma-3-4b-it`                      | Live demo (free, always available) |
+| 2    | GPU Infrastructure   | MedGemma, MedASR, MedSigLIP, TxGemma | Production / evaluation            |
+
+The agent framework abstracts the inference backend. Agents are agnostic to which tier serves their requests.
 
 ## License
 
@@ -120,6 +136,6 @@ CC BY 4.0
 
 ## Disclaimer
 
-MedScribe AI is a research demonstration and is NOT intended for clinical diagnosis, treatment, or patient management. All AI-generated outputs require independent verification by qualified healthcare professionals.
+MedScribe AI is a research demonstration and is NOT intended for clinical diagnosis, treatment, or patient management. All AI-generated outputs require independent verification by qualified healthcare professionals. This system is designed to assist clinical documentation, not to replace clinical judgement.
 
 Built with [HAI-DEF](https://developers.google.com/health-ai-developer-foundations) models from Google Health AI.

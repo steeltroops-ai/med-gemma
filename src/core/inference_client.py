@@ -1,12 +1,23 @@
 """
-Hugging Face Inference Client wrapper for MedScribe AI.
+MedScribe AI -- Unified Inference Client.
 
-Replaces local model loading with HF Serverless Inference API calls.
-- No GPU required
-- No model weights downloaded to server
-- Uses your HF_TOKEN for authenticated access to gated HAI-DEF models
-- Free tier: $0.10/month credit (sufficient for demo usage)
-- Graceful fallback to demo output if API call fails
+Two-tier inference strategy:
+  Tier 1: Google AI Studio (Gemini API) -- free, always-on, uses gemma-3
+          models with medical system prompts for live demo.
+  Tier 2: HF Serverless Inference API -- for MedGemma/TxGemma when a
+          supported provider becomes available.
+  Tier 3: Demo fallback -- hardcoded clinical data if both tiers fail.
+
+Environment variables:
+  GOOGLE_API_KEY  -- Google AI Studio / Gemini API key (free at aistudio.google.com)
+  HF_TOKEN        -- Hugging Face token for gated model access
+
+Why this architecture:
+  MedGemma is NOT served by any free hosted inference API (confirmed 2026-02-24).
+  The competition requires a working live demo.  Google AI Studio provides free
+  access to gemma-3-4b-it which shares architecture with MedGemma and can be
+  prompted for medical tasks.  For production / evaluation, actual MedGemma
+  inference runs on Kaggle's free P100 GPU or Vertex AI.
 """
 
 from __future__ import annotations
@@ -20,15 +31,32 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Token
+# Keys
 # ---------------------------------------------------------------------------
 
-def _get_token() -> str | None:
+def _get_google_key() -> str | None:
+    return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or None
+
+
+def _get_hf_token() -> str | None:
     return os.environ.get("HF_TOKEN") or None
 
 
 # ---------------------------------------------------------------------------
-# Text generation (MedGemma 4B IT / TxGemma)
+# Backend detection
+# ---------------------------------------------------------------------------
+
+def get_inference_backend() -> str:
+    """Return the active inference backend name."""
+    if _get_google_key():
+        return "google_ai_studio"
+    if _get_hf_token():
+        return "hf_inference_api"
+    return "demo_fallback"
+
+
+# ---------------------------------------------------------------------------
+# Text generation
 # ---------------------------------------------------------------------------
 
 def generate_text(
@@ -38,44 +66,88 @@ def generate_text(
     max_new_tokens: int = 2048,
 ) -> str:
     """
-    Call a text-generation model via HF Serverless Inference API.
+    Generate text from a medical prompt.
 
-    Uses the chat-completions compatible endpoint (OpenAI-style).
-    Falls back to raw text generation if chat format unsupported.
-
-    Returns the generated text or raises on error.
+    Tries Google AI Studio first (gemma-3-4b-it), then HF Inference API,
+    then raises if both fail.
     """
-    token = _get_token()
-    if not token:
-        raise RuntimeError("HF_TOKEN not set -- cannot call Inference API")
+    # --- Tier 1: Google AI Studio ---
+    google_key = _get_google_key()
+    if google_key:
+        try:
+            return _google_generate_text(prompt, system_prompt, max_new_tokens, google_key)
+        except Exception as exc:
+            log.warning(f"[GoogleAI] text generation failed: {exc} -- trying HF fallback")
 
-    try:
-        from huggingface_hub import InferenceClient
+    # --- Tier 2: HF Inference API ---
+    hf_token = _get_hf_token()
+    if hf_token:
+        try:
+            return _hf_generate_text(prompt, model_id, system_prompt, max_new_tokens, hf_token)
+        except Exception as exc:
+            log.warning(f"[HF] text generation failed for {model_id}: {exc}")
 
-        client = InferenceClient(token=token)
+    raise RuntimeError(
+        "No inference backend available. Set GOOGLE_API_KEY or HF_TOKEN."
+    )
 
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
 
-        response = client.chat_completion(
-            model=model_id,
-            messages=messages,
-            max_tokens=max_new_tokens,
-            temperature=0.1,
-        )
-        result = response.choices[0].message.content
-        log.info(f"[InferenceAPI] {model_id} generated {len(result)} chars")
-        return result
+def _google_generate_text(
+    prompt: str,
+    system_prompt: str | None,
+    max_new_tokens: int,
+    api_key: str,
+) -> str:
+    """Call Google AI Studio (Gemini API) with gemma-3-4b-it."""
+    from google import genai
 
-    except Exception as exc:
-        log.error(f"[InferenceAPI] text generation failed for {model_id}: {exc}")
-        raise
+    client = genai.Client(api_key=api_key)
+
+    config = genai.types.GenerateContentConfig(
+        system_instruction=system_prompt or "You are an expert clinical documentation specialist.",
+        max_output_tokens=max_new_tokens,
+        temperature=0.1,
+    )
+
+    response = client.models.generate_content(
+        model="gemma-3-4b-it",
+        contents=prompt,
+        config=config,
+    )
+    result = response.text
+    log.info(f"[GoogleAI] gemma-3-4b-it generated {len(result)} chars")
+    return result
+
+
+def _hf_generate_text(
+    prompt: str,
+    model_id: str,
+    system_prompt: str | None,
+    max_new_tokens: int,
+    token: str,
+) -> str:
+    """Call HF Serverless Inference API."""
+    from huggingface_hub import InferenceClient
+
+    client = InferenceClient(token=token)
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    response = client.chat_completion(
+        model=model_id,
+        messages=messages,
+        max_tokens=max_new_tokens,
+        temperature=0.1,
+    )
+    result = response.choices[0].message.content
+    log.info(f"[HF] {model_id} generated {len(result)} chars")
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Image + Text (MedGemma 4B IT multimodal)
+# Image + Text (multimodal)
 # ---------------------------------------------------------------------------
 
 def analyze_image_text(
@@ -86,49 +158,101 @@ def analyze_image_text(
     max_new_tokens: int = 1024,
 ) -> str:
     """
-    Call MedGemma 4B IT with an image + text prompt via HF Inference API.
+    Analyse a medical image with a text prompt.
 
-    image_bytes: raw image bytes (JPEG/PNG)
-    Returns the model's text response.
+    Tries Google AI Studio (gemma-3-4b-it multimodal), then HF API.
     """
-    token = _get_token()
-    if not token:
-        raise RuntimeError("HF_TOKEN not set -- cannot call Inference API")
+    # --- Tier 1: Google AI Studio ---
+    google_key = _get_google_key()
+    if google_key:
+        try:
+            return _google_analyze_image(
+                image_bytes, prompt, system_prompt, max_new_tokens, google_key
+            )
+        except Exception as exc:
+            log.warning(f"[GoogleAI] image analysis failed: {exc}")
 
-    try:
-        from huggingface_hub import InferenceClient
+    # --- Tier 2: HF Inference API ---
+    hf_token = _get_hf_token()
+    if hf_token:
+        try:
+            return _hf_analyze_image(
+                image_bytes, prompt, model_id, system_prompt, max_new_tokens, hf_token
+            )
+        except Exception as exc:
+            log.warning(f"[HF] image analysis failed for {model_id}: {exc}")
 
-        client = InferenceClient(token=token)
+    raise RuntimeError("No inference backend available for image analysis.")
 
-        # Encode image as base64 data URL
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        image_url = f"data:image/jpeg;base64,{b64}"
 
-        messages: list[dict] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+def _google_analyze_image(
+    image_bytes: bytes,
+    prompt: str,
+    system_prompt: str | None,
+    max_new_tokens: int,
+    api_key: str,
+) -> str:
+    """Call Google AI Studio with image + text (multimodal gemma-3)."""
+    from google import genai
+    from google.genai import types as gtypes
 
-        messages.append({
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": image_url}},
-                {"type": "text", "text": prompt},
-            ],
-        })
+    client = genai.Client(api_key=api_key)
 
-        response = client.chat_completion(
-            model=model_id,
-            messages=messages,
-            max_tokens=max_new_tokens,
-            temperature=0.1,
-        )
-        result = response.choices[0].message.content
-        log.info(f"[InferenceAPI] {model_id} image analysis: {len(result)} chars")
-        return result
+    # Build content parts
+    image_part = gtypes.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+    text_part = gtypes.Part.from_text(text=prompt)
 
-    except Exception as exc:
-        log.error(f"[InferenceAPI] image+text inference failed for {model_id}: {exc}")
-        raise
+    config = gtypes.GenerateContentConfig(
+        system_instruction=system_prompt or "You are an expert medical image analyst.",
+        max_output_tokens=max_new_tokens,
+        temperature=0.1,
+    )
+
+    response = client.models.generate_content(
+        model="gemma-3-4b-it",
+        contents=[image_part, text_part],
+        config=config,
+    )
+    result = response.text
+    log.info(f"[GoogleAI] gemma-3-4b-it image analysis: {len(result)} chars")
+    return result
+
+
+def _hf_analyze_image(
+    image_bytes: bytes,
+    prompt: str,
+    model_id: str,
+    system_prompt: str | None,
+    max_new_tokens: int,
+    token: str,
+) -> str:
+    """Call HF Inference API with image + text."""
+    from huggingface_hub import InferenceClient
+
+    client = InferenceClient(token=token)
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    image_url = f"data:image/jpeg;base64,{b64}"
+
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": image_url}},
+            {"type": "text", "text": prompt},
+        ],
+    })
+
+    response = client.chat_completion(
+        model=model_id,
+        messages=messages,
+        max_tokens=max_new_tokens,
+        temperature=0.1,
+    )
+    result = response.choices[0].message.content
+    log.info(f"[HF] {model_id} image analysis: {len(result)} chars")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -141,30 +265,108 @@ def classify_image(
     model_id: str = "google/medsiglip-448",
 ) -> list[dict]:
     """
-    Run zero-shot image classification via HF Inference API.
+    Run zero-shot image classification.
 
-    Returns list of {"label": str, "score": float} sorted by score desc.
+    MedSigLIP is not available on HF Inference API either.
+    Use Google AI Studio multimodal as a classifier via structured prompting.
     """
-    token = _get_token()
-    if not token:
-        raise RuntimeError("HF_TOKEN not set -- cannot call Inference API")
+    # --- Tier 1: Google AI Studio (simulate zero-shot with structured prompt) ---
+    google_key = _get_google_key()
+    if google_key:
+        try:
+            return _google_classify_image(image_bytes, candidate_labels, google_key)
+        except Exception as exc:
+            log.warning(f"[GoogleAI] image classification failed: {exc}")
+
+    # --- Tier 2: HF Inference API (if MedSigLIP becomes available) ---
+    hf_token = _get_hf_token()
+    if hf_token:
+        try:
+            from huggingface_hub import InferenceClient
+            client = InferenceClient(token=hf_token)
+            result = client.zero_shot_image_classification(
+                image=image_bytes,
+                candidate_labels=candidate_labels,
+                model=model_id,
+            )
+            return [{"label": r.label, "score": r.score} for r in result]
+        except Exception as exc:
+            log.warning(f"[HF] zero-shot classification failed: {exc}")
+
+    raise RuntimeError("No inference backend available for image classification.")
+
+
+def _google_classify_image(
+    image_bytes: bytes,
+    candidate_labels: list[str],
+    api_key: str,
+) -> list[dict]:
+    """Simulate zero-shot classification using Gemma 3 multimodal."""
+    from google import genai
+    from google.genai import types as gtypes
+    import json
+
+    client = genai.Client(api_key=api_key)
+
+    labels_str = ", ".join(candidate_labels)
+    prompt = (
+        f"Classify this medical image into exactly ONE of these categories: [{labels_str}]. "
+        f"Respond with ONLY a JSON object in this format: "
+        f'{{"label": "<chosen_category>", "confidence": <0.0-1.0>}}. '
+        f"No other text."
+    )
+
+    image_part = gtypes.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+    text_part = gtypes.Part.from_text(text=prompt)
+
+    config = gtypes.GenerateContentConfig(
+        system_instruction="You are a medical image classification system. Respond with JSON only.",
+        max_output_tokens=128,
+        temperature=0.0,
+    )
+
+    response = client.models.generate_content(
+        model="gemma-3-4b-it",
+        contents=[image_part, text_part],
+        config=config,
+    )
+
+    # Parse the JSON response
+    text = response.text.strip()
+    # Try to extract JSON from potential markdown wrapping
+    if "```" in text:
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
 
     try:
-        from huggingface_hub import InferenceClient
+        data = json.loads(text)
+        chosen_label = data.get("label", candidate_labels[0])
+        confidence = float(data.get("confidence", 0.5))
+    except (json.JSONDecodeError, ValueError):
+        # Fallback: check which label appears in the response
+        chosen_label = candidate_labels[0]
+        confidence = 0.5
+        for label in candidate_labels:
+            if label.lower() in response.text.lower():
+                chosen_label = label
+                confidence = 0.7
+                break
 
-        client = InferenceClient(token=token)
+    # Build full results list with the chosen label at top
+    results = []
+    remaining_score = 1.0 - confidence
+    per_other = remaining_score / max(len(candidate_labels) - 1, 1)
+    for label in candidate_labels:
+        if label == chosen_label:
+            results.append({"label": label, "score": confidence})
+        else:
+            results.append({"label": label, "score": round(per_other, 3)})
 
-        result = client.zero_shot_image_classification(
-            image=image_bytes,
-            candidate_labels=candidate_labels,
-            model=model_id,
-        )
-        # result is list of ClassificationOutput with .label and .score
-        return [{"label": r.label, "score": r.score} for r in result]
-
-    except Exception as exc:
-        log.error(f"[InferenceAPI] zero-shot classification failed for {model_id}: {exc}")
-        raise
+    results.sort(key=lambda x: x["score"], reverse=True)
+    log.info(f"[GoogleAI] image classified as '{chosen_label}' ({confidence:.2f})")
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -176,27 +378,63 @@ def transcribe_audio(
     model_id: str = "google/medasr",
 ) -> str:
     """
-    Transcribe audio via HF Inference API (automatic-speech-recognition).
+    Transcribe audio.
 
-    Returns the transcript string.
+    MedASR is not on any free inference API. Use Google AI Studio
+    for audio transcription as fallback.
     """
-    token = _get_token()
-    if not token:
-        raise RuntimeError("HF_TOKEN not set -- cannot call Inference API")
+    # --- Tier 1: Google AI Studio ---
+    google_key = _get_google_key()
+    if google_key:
+        try:
+            return _google_transcribe_audio(audio_bytes, google_key)
+        except Exception as exc:
+            log.warning(f"[GoogleAI] audio transcription failed: {exc}")
 
-    try:
-        from huggingface_hub import InferenceClient
+    # --- Tier 2: HF Inference API ---
+    hf_token = _get_hf_token()
+    if hf_token:
+        try:
+            from huggingface_hub import InferenceClient
+            client = InferenceClient(token=hf_token)
+            result = client.automatic_speech_recognition(audio=audio_bytes, model=model_id)
+            transcript = result.text if hasattr(result, "text") else str(result)
+            log.info(f"[HF] MedASR transcribed {len(transcript)} chars")
+            return transcript
+        except Exception as exc:
+            log.warning(f"[HF] ASR failed: {exc}")
 
-        client = InferenceClient(token=token)
-        result = client.automatic_speech_recognition(audio=audio_bytes, model=model_id)
-        # result is ASROutput with .text attribute
-        transcript = result.text if hasattr(result, "text") else str(result)
-        log.info(f"[InferenceAPI] MedASR transcribed {len(transcript)} chars")
-        return transcript
+    raise RuntimeError("No inference backend available for audio transcription.")
 
-    except Exception as exc:
-        log.error(f"[InferenceAPI] ASR failed for {model_id}: {exc}")
-        raise
+
+def _google_transcribe_audio(audio_bytes: bytes, api_key: str) -> str:
+    """Transcribe audio using Gemma 3 via Google AI Studio."""
+    from google import genai
+    from google.genai import types as gtypes
+
+    client = genai.Client(api_key=api_key)
+
+    audio_part = gtypes.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+    text_part = gtypes.Part.from_text(
+        text="Transcribe this medical audio recording accurately. "
+             "Include all medical terminology, drug names, and clinical findings. "
+             "Output ONLY the transcript text, no commentary."
+    )
+
+    config = gtypes.GenerateContentConfig(
+        system_instruction="You are a medical transcription specialist. Produce accurate verbatim transcripts.",
+        max_output_tokens=4096,
+        temperature=0.0,
+    )
+
+    response = client.models.generate_content(
+        model="gemma-3-4b-it",
+        contents=[audio_part, text_part],
+        config=config,
+    )
+    result = response.text
+    log.info(f"[GoogleAI] transcribed {len(result)} chars")
+    return result
 
 
 # ---------------------------------------------------------------------------
