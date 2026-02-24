@@ -103,12 +103,12 @@ graph LR
 
 ## Performance
 
-| Metric                                | Value                    |
-| ------------------------------------- | ------------------------ |
-| Mean end-to-end latency               | ~14s                     |
-| Phase 1 parallel speedup              | 1.65x vs sequential      |
-| Infrastructure cost                   | $0 (HF Spaces free tier) |
-| Production cost at 10K encounters/day | ~$180/day (GCP A100)     |
+| Metric                                | Value                      |
+| ------------------------------------- | -------------------------- |
+| Mean end-to-end latency               | 14 seconds                 |
+| Phase 1 parallel speedup              | 1.65x vs sequential        |
+| Infrastructure cost                   | Zero (HF Spaces free tier) |
+| Production cost at 10K encounters/day | USD 180/day (GCP A100)     |
 
 ## Reproducibility
 
