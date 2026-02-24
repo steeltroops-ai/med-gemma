@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.agent/
+docs/
+video/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+tmp/
+*.wav
+*.mp3
+*.mp4
+*.webm
+*.avi
+
+# Model cache
+models/
+*.bin
+*.safetensors
+
+# Environment
+.env
+.env.local
+
+# UV
+uv.lock

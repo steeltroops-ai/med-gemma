@@ -1,0 +1,1 @@
+"""MedScribe AI -- Core package."""
