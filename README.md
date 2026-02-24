@@ -1,10 +1,22 @@
+---
+title: MedScribe AI
+emoji: +
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: 4.44.0
+app_file: demo/app.py
+pinned: false
+license: cc-by-4.0
+---
+
 # MedScribe AI
 
 **Agentic Clinical Documentation System powered by HAI-DEF models**
 
 MedScribe AI is a multi-agent pipeline that transforms clinical encounters into structured medical records using Google's Health AI Developer Foundations (HAI-DEF) open-weight models.
 
-🏆 **[Read the Kaggle Competition MedGemma Impact Challenge Writeup Here](writeup.md)**
+🏆 **[Read the Kaggle Competition MedGemma Impact Challenge Writeup Here](docs/writeup.md)**
 
 ---
 

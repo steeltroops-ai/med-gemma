@@ -21,7 +21,7 @@ ENV/
 # Development and Planning
 .agents/
 MASTERPLAN.md
-docs/
+docs/data/
 video/
 
 # OS

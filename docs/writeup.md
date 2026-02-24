@@ -6,7 +6,7 @@ MedScribe AI: Agentic Clinical Documentation System
 
 ## Team
 
-- Lead Developer & ML Engineer ([Mayank](https://steeltroops.vercel.app)) -- designed the agentic architecture, implemented all HAI-DEF model integrations, built the Gradio demo, and produced the video.
+- Lead Developer & ML Engineer ([Mayank](https://steeltroops.vercel.app)) -- designed the agentic architecture, implemented all HAI-DEF model integrations, built the next.js demo, and produced the video.
 
 ## Problem statement
 
