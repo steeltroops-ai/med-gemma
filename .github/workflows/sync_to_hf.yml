@@ -32,6 +32,7 @@ jobs:
 
           # Initialize a new git repo for the sync
           git init
+          git branch -M main
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
