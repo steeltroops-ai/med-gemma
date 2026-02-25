@@ -6,7 +6,7 @@ export function Header({ activePhases = [] }: { activePhases?: string[] }) {
   return (
     <header className="w-full flex items-center justify-between z-10 sticky top-0 pb-4 shrink-0 pt-0">
       {/* Search Bar matching image */}
-      <div className="flex items-center glass-card rounded-2xl px-5 py-3 w-full max-w-sm shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+      <div className="flex items-center glass-card rounded-2xl px-5 py-3 w-full max-w-sm border border-white/50">
         <Search
           className="w-[18px] h-[18px] text-text-muted mr-3"
           strokeWidth={2.5}
@@ -20,9 +20,9 @@ export function Header({ activePhases = [] }: { activePhases?: string[] }) {
 
       {/* Profile Area */}
       <div className="flex items-center gap-5 ml-auto">
-        <div className="relative cursor-pointer p-2 rounded-full hover:bg-white/60 transition-colors">
-          <Bell className="w-5 h-5 text-text-muted" strokeWidth={2.5} />
-          <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-accent-red rounded-full border-[2px] border-white shadow-sm" />
+        <div className="relative cursor-pointer p-2 rounded-full hover:bg-white/60 transition-colors bg-white/40 border border-white/50">
+          <Bell className="w-4 h-4 text-text-muted" strokeWidth={2.5} />
+          <span className="absolute top-1 right-1 w-2 h-2 bg-accent-red rounded-full border-[1.5px] border-white" />
         </div>
 
         {/* Divider */}
@@ -37,7 +37,7 @@ export function Header({ activePhases = [] }: { activePhases?: string[] }) {
               Dr. P. Furby
             </span>
           </div>
-          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-accent-blue/20 to-accent-purple/20 overflow-hidden border-2 border-white shadow-sm flex items-center justify-center">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-accent-blue/20 to-accent-purple/20 overflow-hidden border-2 border-white flex items-center justify-center">
             <img
               src="https://ui-avatars.com/api/?name=Peter+Furby&background=random&color=fff&bold=true"
               alt="User"

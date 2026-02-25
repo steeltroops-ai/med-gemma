@@ -63,7 +63,7 @@ export function Sidebar({ activeItem = "Dashboard" }: { activeItem?: string }) {
               src="/medscribe-logo.png"
               alt="MedScribe Logo"
               fill
-              className="object-contain drop-shadow-[0_4px_12px_rgba(0,102,255,0.2)]"
+              className="object-contain drop-shadow-none"
             />
           </div>
           {!isCollapsed && (
@@ -96,7 +96,7 @@ export function Sidebar({ activeItem = "Dashboard" }: { activeItem?: string }) {
                       ? "w-12 h-12 justify-center rounded-2xl"
                       : "w-full gap-3 px-4 py-3 rounded-2xl",
                     isActive
-                      ? "bg-white/80 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-white text-accent-blue font-bold"
+                      ? "bg-white/80 border border-white text-accent-blue font-bold shadow-none"
                       : "text-text-muted hover:bg-white/60 hover:text-text-main font-semibold",
                   )}
                   title={isCollapsed ? item.label : undefined}
@@ -133,7 +133,7 @@ export function Sidebar({ activeItem = "Dashboard" }: { activeItem?: string }) {
               ? "w-12 h-12 justify-center rounded-2xl"
               : "w-full gap-3 px-4 py-3 rounded-2xl",
             activeItem === "Settings"
-              ? "bg-white/80 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-white text-accent-blue font-bold"
+              ? "bg-white/80 border border-white text-accent-blue font-bold shadow-none"
               : "text-text-muted hover:bg-white/60 hover:text-text-main",
           )}
           title={isCollapsed ? "Settings" : undefined}

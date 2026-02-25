@@ -6,10 +6,15 @@ clinical reasoning, and the full agentic pipeline.
 
 Architecture: All ML inference goes through HF Serverless Inference API.
 No local model loading. No GPU required. Runs on HF Spaces free tier (CPU).
+
+Agentic Workflow:
+  /api/pipeline-stream  -- SSE streaming endpoint (ReAct loop events)
+  /api/full-pipeline     -- Synchronous endpoint (backwards compatible)
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
@@ -18,8 +23,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from src.agents.orchestrator import ClinicalOrchestrator
+from src.agents.cognitive_orchestrator import CognitiveOrchestrator
 from src.core.schemas import (
     ClinicalRequest,
     ClinicalResponse,
@@ -34,8 +41,9 @@ from src.utils.fhir_builder import FHIRBuilder
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# Global orchestrator
+# Global orchestrators
 orchestrator = ClinicalOrchestrator()
+cognitive_orchestrator = CognitiveOrchestrator()
 
 
 @asynccontextmanager
@@ -218,7 +226,7 @@ async def generate_notes(req: ClinicalRequest):
 
 
 # ---------------------------------------------------------------------------
-# Full Pipeline
+# Full Pipeline (Legacy -- synchronous response)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/full-pipeline", response_model=PipelineResponse)
@@ -228,7 +236,7 @@ async def full_pipeline(
     text: str = Form(default=""),
     specialty: str = Form(default="general"),
 ):
-    """Run the complete 6-phase agentic pipeline (all HAI-DEF agents)."""
+    """Run the complete agentic pipeline (all HAI-DEF agents). Returns final result."""
     from PIL import Image as PILImage
 
     audio_path = None
@@ -242,11 +250,60 @@ async def full_pipeline(
     if image:
         img = PILImage.open(image.file)
 
-    return await orchestrator.run_full_pipeline(
+    return await cognitive_orchestrator.run_full_pipeline(
         audio_path=audio_path,
         image=img,
         text_input=text or None,
         specialty=specialty,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Full Pipeline (Streaming -- SSE ReAct events)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/pipeline-stream")
+async def pipeline_stream(
+    audio: UploadFile | None = File(default=None),
+    image: UploadFile | None = File(default=None),
+    text: str = Form(default=""),
+    specialty: str = Form(default="general"),
+):
+    """Stream the agentic ReAct loop as Server-Sent Events.
+
+    Each event is a JSON object with type: thought|action|observation|error|complete.
+    The frontend consumes this stream to show the agent's reasoning in real-time.
+    """
+    from PIL import Image as PILImage
+
+    audio_path = None
+    if audio:
+        suffix = Path(audio.filename or "audio.wav").suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+            f.write(await audio.read())
+            audio_path = f.name
+
+    img = None
+    if image:
+        img = PILImage.open(image.file)
+
+    async def event_generator():
+        async for event in cognitive_orchestrator.run_pipeline_stream(
+            audio_path=audio_path,
+            image=img,
+            text_input=text or None,
+            specialty=specialty,
+        ):
+            yield event.to_sse()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
