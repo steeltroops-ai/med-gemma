@@ -1,21 +1,49 @@
 """
 MedScribe AI -- Unified Inference Client.
 
-Multi-backend inference abstraction:
-  Primary:  HF Serverless Inference API -- HAI-DEF models via huggingface_hub.
-  Secondary: GenAI SDK -- compatible Gemma models via google-genai client.
-  Fallback:  Demo mode -- deterministic clinical extraction (no API calls).
+Multi-backend inference abstraction (4-tier):
+  Tier 0: Local vLLM / Ollama  -- LOCAL_VLLM_URL env var (air-gapped hospitals)
+  Tier 1: HF Serverless Inference API -- HAI-DEF models via huggingface_hub.
+  Tier 2: GenAI SDK -- compatible Gemma models via google-genai client.
+  Tier 3: Demo mode -- deterministic clinical extraction (no API calls).
 
 Environment variables:
-  HF_TOKEN        -- Hugging Face token for HAI-DEF model access (primary)
-  GOOGLE_API_KEY  -- GenAI SDK key (secondary, optional)
+  LOCAL_VLLM_URL  -- Local vLLM/Ollama base URL, e.g. http://localhost:8000 (Tier 0)
+                     Example with Ollama: http://localhost:11434
+                     Model name passed as-is; for Ollama use "medgemma:4b" or similar.
+  HF_TOKEN        -- Hugging Face token for HAI-DEF model access (Tier 1)
+                     Get yours at: https://huggingface.co/settings/tokens
+                     Must have read access to google/medgemma-4b-it (gated model).
+  GOOGLE_API_KEY  -- GenAI SDK key (Tier 2, optional)
+                     Get yours at: https://aistudio.google.com/app/apikey
+  GEMINI_API_KEY  -- Alias for GOOGLE_API_KEY (Tier 2, optional)
 
 The InferenceClient abstraction ensures agents are fully agnostic to
 the serving backend. Adding a new backend (Vertex AI, Ollama, vLLM)
 requires implementing a single adapter function -- zero agent code changes.
+
+Air-gapped deployment: Set LOCAL_VLLM_URL to point to an on-premise
+vLLM server or Ollama instance. PHI never leaves the hospital network.
+
+Public API (import these -- do not call private functions directly):
+  generate_text(prompt, model_id, system_prompt, max_new_tokens) -> str
+  analyze_image_text(image_bytes, prompt, model_id, ...) -> str
+  classify_image(image_bytes, candidate_labels, model_id) -> list[dict]
+  transcribe_audio(audio_bytes, model_id) -> str
+  get_inference_backend() -> str  # Returns active tier name
+  pil_to_bytes(image, format) -> bytes  # PIL Image helper
 """
 
 from __future__ import annotations
+
+__all__ = [
+    "generate_text",
+    "analyze_image_text",
+    "classify_image",
+    "transcribe_audio",
+    "get_inference_backend",
+    "pil_to_bytes",
+]
 
 import base64
 import io
@@ -28,6 +56,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Keys
 # ---------------------------------------------------------------------------
+
+def _get_local_vllm_url() -> str | None:
+    """Return local vLLM/Ollama base URL (Tier 0 — air-gapped deployment)."""
+    return os.environ.get("LOCAL_VLLM_URL") or None
+
 
 def _get_genai_key() -> str | None:
     return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or None
@@ -43,6 +76,8 @@ def _get_hf_token() -> str | None:
 
 def get_inference_backend() -> str:
     """Return the active inference backend name."""
+    if _get_local_vllm_url():
+        return "local_vllm"
     if _get_hf_token():
         return "hf_inference_api"
     if _get_genai_key():
@@ -63,17 +98,27 @@ def generate_text(
     """
     Generate text from a medical prompt.
 
-    Tries HF Inference API first, then GenAI SDK, then raises.
+    Tries Tier 0 (local vLLM) → Tier 1 (HF API) → Tier 2 (GenAI) → raises.
     """
-    # --- Primary: HF Inference API ---
+    # --- Tier 0: Local vLLM / Ollama (air-gapped deployment) ---
+    local_url = _get_local_vllm_url()
+    if local_url:
+        try:
+            return _local_generate_text(prompt, model_id, system_prompt, max_new_tokens, local_url)
+        except Exception as exc:
+            log.warning(f"[LocalVLLM] text generation failed: {exc} -- trying HF API")
+
+    # --- Tier 1: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
             return _hf_generate_text(prompt, model_id, system_prompt, max_new_tokens, hf_token)
         except Exception as exc:
-            log.warning(f"[HF] text generation failed for {model_id}: {exc} -- trying GenAI fallback")
+            log.warning(
+                f"[HF] text generation failed for {model_id}: {exc} -- trying GenAI fallback"
+            )
 
-    # --- Secondary: GenAI SDK ---
+    # --- Tier 2: GenAI SDK ---
     genai_key = _get_genai_key()
     if genai_key:
         try:
@@ -82,8 +127,53 @@ def generate_text(
             log.warning(f"[GenAI] text generation failed: {exc}")
 
     raise RuntimeError(
-        "No inference backend available. Set HF_TOKEN."
+        "No inference backend available. "
+        "To fix: set one of the following environment variables:\n"
+        "  • LOCAL_VLLM_URL=http://localhost:8000  (Tier 0 — local vLLM/Ollama)\n"
+        "  • HF_TOKEN=hf_...  (Tier 1 — HF Inference API, get at hf.co/settings/tokens)\n"
+        "  • GOOGLE_API_KEY=AIza...  (Tier 2 — Google GenAI SDK)\n"
+        "Or run in demo mode (no env vars needed) — demo mode always works."
     )
+
+
+def _local_generate_text(
+    prompt: str,
+    model_id: str,
+    system_prompt: str | None,
+    max_new_tokens: int,
+    base_url: str,
+) -> str:
+    """Call local vLLM/Ollama OpenAI-compatible API (Tier 0)."""
+    import json as _json
+    import urllib.request
+
+    # Strip trailing slash
+    base_url = base_url.rstrip("/")
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = _json.dumps({
+        "model": model_id,
+        "messages": messages,
+        "max_tokens": max_new_tokens,
+        "temperature": 0.1,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = _json.loads(resp.read().decode("utf-8"))
+
+    result = data["choices"][0]["message"]["content"]
+    log.info(f"[LocalVLLM] {model_id} generated {len(result)} chars (offline)")
+    return result
 
 
 def _genai_generate_text(
@@ -154,9 +244,19 @@ def analyze_image_text(
     """
     Analyse a medical image with a text prompt.
 
-    Tries HF API first, then GenAI SDK.
+    Tries Tier 0 (local vLLM) → Tier 1 (HF API) → Tier 2 (GenAI) → raises.
     """
-    # --- Primary: HF Inference API ---
+    # --- Tier 0: Local vLLM with base64 image ---
+    local_url = _get_local_vllm_url()
+    if local_url:
+        try:
+            return _local_analyze_image(
+                image_bytes, prompt, model_id, system_prompt, max_new_tokens, local_url
+            )
+        except Exception as exc:
+            log.warning(f"[LocalVLLM] image analysis failed: {exc}")
+
+    # --- Tier 1: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
@@ -166,7 +266,7 @@ def analyze_image_text(
         except Exception as exc:
             log.warning(f"[HF] image analysis failed for {model_id}: {exc}")
 
-    # --- Secondary: GenAI SDK ---
+    # --- Tier 2: GenAI SDK ---
     genai_key = _get_genai_key()
     if genai_key:
         try:
@@ -176,7 +276,58 @@ def analyze_image_text(
         except Exception as exc:
             log.warning(f"[GenAI] image analysis failed: {exc}")
 
-    raise RuntimeError("No inference backend available for image analysis.")
+    raise RuntimeError(
+        "No inference backend available for image analysis. "
+        "Set LOCAL_VLLM_URL, HF_TOKEN, or GOOGLE_API_KEY — see module docstring."
+    )
+
+
+def _local_analyze_image(
+    image_bytes: bytes,
+    prompt: str,
+    model_id: str,
+    system_prompt: str | None,
+    max_new_tokens: int,
+    base_url: str,
+) -> str:
+    """Call local vLLM multimodal endpoint with base64-encoded image (Tier 0)."""
+    import json as _json
+    import urllib.request
+
+    base_url = base_url.rstrip("/")
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    image_url = f"data:image/jpeg;base64,{b64}"
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": image_url}},
+            {"type": "text", "text": prompt},
+        ],
+    })
+
+    payload = _json.dumps({
+        "model": model_id,
+        "messages": messages,
+        "max_tokens": max_new_tokens,
+        "temperature": 0.1,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = _json.loads(resp.read().decode("utf-8"))
+
+    result = data["choices"][0]["message"]["content"]
+    log.info(f"[LocalVLLM] {model_id} image analysis: {len(result)} chars (offline)")
+    return result
 
 
 def _genai_analyze_image(
@@ -261,9 +412,17 @@ def classify_image(
     """
     Run zero-shot image classification.
 
-    Tries HF API first (MedSigLIP), then GenAI SDK structured prompting.
+    Tries Tier 0 (local vLLM) → Tier 1 (HF MedSigLIP) → Tier 2 (GenAI) → raises.
     """
-    # --- Primary: HF Inference API ---
+    # --- Tier 0: Local vLLM structured prompting ---
+    local_url = _get_local_vllm_url()
+    if local_url:
+        try:
+            return _local_classify_image(image_bytes, candidate_labels, local_url)
+        except Exception as exc:
+            log.warning(f"[LocalVLLM] image classification failed: {exc}")
+
+    # --- Tier 1: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
@@ -278,7 +437,7 @@ def classify_image(
         except Exception as exc:
             log.warning(f"[HF] zero-shot classification failed: {exc}")
 
-    # --- Secondary: GenAI SDK ---
+    # --- Tier 2: GenAI SDK ---
     genai_key = _get_genai_key()
     if genai_key:
         try:
@@ -286,7 +445,72 @@ def classify_image(
         except Exception as exc:
             log.warning(f"[GenAI] image classification failed: {exc}")
 
-    raise RuntimeError("No inference backend available for image classification.")
+    raise RuntimeError(
+        "No inference backend available for image classification. "
+        "Set LOCAL_VLLM_URL, HF_TOKEN, or GOOGLE_API_KEY — see module docstring."
+    )
+
+
+def _local_classify_image(
+    image_bytes: bytes,
+    candidate_labels: list[str],
+    base_url: str,
+) -> list[dict]:
+    """Zero-shot classify via local vLLM (Tier 0) using structured JSON prompt."""
+    import json as _json
+    import urllib.request
+
+    base_url = base_url.rstrip("/")
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    image_url = f"data:image/jpeg;base64,{b64}"
+    labels_str = ", ".join(candidate_labels)
+
+    prompt = (
+        f"Classify this medical image into exactly ONE of these categories: [{labels_str}]. "
+        f'Respond with ONLY JSON: {{"label": "<chosen_category>", "confidence": <0.0-1.0>}}'
+    )
+
+    payload = _json.dumps({
+        "model": "medgemma-4b-it",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": image_url}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = _json.loads(resp.read().decode("utf-8"))
+
+    text = data["choices"][0]["message"]["content"].strip()
+    if "```" in text:
+        text = text.split("```")[1].lstrip("json").strip()
+    try:
+        parsed = _json.loads(text)
+        chosen = parsed.get("label", candidate_labels[0])
+        confidence = float(parsed.get("confidence", 0.75))
+    except (ValueError, KeyError):
+        chosen = candidate_labels[0]
+        confidence = 0.6
+
+    remaining = (1.0 - confidence) / max(len(candidate_labels) - 1, 1)
+    results = [
+        {"label": lbl, "score": confidence if lbl == chosen else round(remaining, 3)}
+        for lbl in candidate_labels
+    ]
+    results.sort(key=lambda x: x["score"], reverse=True)
+    log.info(f"[LocalVLLM] classified as '{chosen}' ({confidence:.2f}) (offline)")
+    return results
 
 
 def _genai_classify_image(
@@ -374,9 +598,17 @@ def transcribe_audio(
     """
     Transcribe audio.
 
-    Tries HF API first (MedASR), then GenAI SDK as fallback.
+    Tries Tier 0 (local vLLM) → Tier 1 (HF MedASR) → Tier 2 (GenAI) → raises.
     """
-    # --- Primary: HF Inference API ---
+    # --- Tier 0: Local vLLM (if it supports ASR) ---
+    local_url = _get_local_vllm_url()
+    if local_url:
+        try:
+            return _local_transcribe_audio(audio_bytes, local_url)
+        except Exception as exc:
+            log.warning(f"[LocalVLLM] ASR failed: {exc}")
+
+    # --- Tier 1: HF Inference API ---
     hf_token = _get_hf_token()
     if hf_token:
         try:
@@ -389,7 +621,7 @@ def transcribe_audio(
         except Exception as exc:
             log.warning(f"[HF] ASR failed: {exc}")
 
-    # --- Secondary: GenAI SDK ---
+    # --- Tier 2: GenAI SDK ---
     genai_key = _get_genai_key()
     if genai_key:
         try:
@@ -397,7 +629,38 @@ def transcribe_audio(
         except Exception as exc:
             log.warning(f"[GenAI] audio transcription failed: {exc}")
 
-    raise RuntimeError("No inference backend available for audio transcription.")
+    raise RuntimeError(
+        "No inference backend available for audio transcription. "
+        "Set LOCAL_VLLM_URL, HF_TOKEN, or GOOGLE_API_KEY — see module docstring."
+    )
+
+
+def _local_transcribe_audio(audio_bytes: bytes, base_url: str) -> str:
+    """Transcribe audio using local Whisper-compatible endpoint (Tier 0)."""
+    import json as _json
+    import urllib.request
+
+    base_url = base_url.rstrip("/")
+    # Use OpenAI-compatible transcriptions endpoint
+    boundary = "----MedScribeAudioBoundary"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
+        f"Content-Type: audio/wav\r\n\r\n"
+    ).encode("utf-8") + audio_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/v1/audio/transcriptions",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = _json.loads(resp.read().decode("utf-8"))
+
+    result = data.get("text", "")
+    log.info(f"[LocalVLLM] transcribed {len(result)} chars (offline)")
+    return result
 
 
 def _genai_transcribe_audio(audio_bytes: bytes, api_key: str) -> str:
@@ -415,7 +678,10 @@ def _genai_transcribe_audio(audio_bytes: bytes, api_key: str) -> str:
     )
 
     config = gtypes.GenerateContentConfig(
-        system_instruction="You are a medical transcription specialist. Produce accurate verbatim transcripts.",
+        system_instruction=(
+            "You are a medical transcription specialist. "
+            "Produce accurate verbatim transcripts."
+        ),
         max_output_tokens=4096,
         temperature=0.0,
     )

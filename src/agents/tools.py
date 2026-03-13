@@ -14,18 +14,19 @@ Tool Contract:
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
-from PIL import Image
-
+from src.agents.clinical_agent import ClinicalReasoningAgent
+from src.agents.cxr_agent import CXRAgent
+from src.agents.derm_agent import DermAgent
+from src.agents.drug_agent import DrugInteractionAgent
+from src.agents.image_agent import ImageAnalysisAgent
+from src.agents.path_agent import PathAgent
+from src.agents.qa_agent import QAAgent
 from src.agents.transcription_agent import TranscriptionAgent
 from src.agents.triage_agent import TriageAgent
-from src.agents.image_agent import ImageAnalysisAgent
-from src.agents.clinical_agent import ClinicalReasoningAgent
-from src.agents.drug_agent import DrugInteractionAgent
-from src.agents.qa_agent import QAAgent
-from src.utils.fhir_builder import FHIRBuilder
 from src.core.schemas import SOAPNote
+from src.utils.fhir_builder import FHIRBuilder
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +74,9 @@ class ToolRegistry:
         self._clinical_reasoning = ClinicalReasoningAgent()
         self._drug_interaction = DrugInteractionAgent()
         self._qa = QAAgent()
+        self._cxr = CXRAgent()
+        self._derm = DermAgent()
+        self._path = PathAgent()
 
         # Build tool registry
         self._tools: dict[str, Tool] = {}
@@ -121,6 +125,45 @@ class ToolRegistry:
         ))
 
         self._register(Tool(
+            name="AnalyzeCXR",
+            description=(
+                "Specialized chest X-ray analysis using google/cxr-foundation. "
+                "Use this instead of AnalyzeImage when TriageImage returns specialty='chest_xray' "
+                "or 'radiology'. Produces a structured radiology report with cardiac, pulmonary, "
+                "mediastinal, and pleural assessment. Returns a full radiology report."
+            ),
+            parameters="image (PIL.Image), clinical_context (str, optional)",
+            agent=self._cxr,
+            execute_fn=self._exec_analyze_cxr,
+        ))
+
+        self._register(Tool(
+            name="AnalyzeDerm",
+            description=(
+                "Specialized dermatology analysis using google/derm-foundation. "
+                "Use this instead of AnalyzeImage when TriageImage returns specialty='dermatology'. "
+                "Analyzes skin lesion morphology, color, borders, and provides differential "
+                "diagnosis. Returns structured dermatological assessment."
+            ),
+            parameters="image (PIL.Image), patient_context (str, optional)",
+            agent=self._derm,
+            execute_fn=self._exec_analyze_derm,
+        ))
+
+        self._register(Tool(
+            name="AnalyzePath",
+            description=(
+                "Specialized histopathology analysis using google/path-foundation. "
+                "Use this instead of AnalyzeImage when TriageImage returns specialty='pathology'. "
+                "Analyzes tissue architecture, cellular morphology, mitotic activity, and "
+                "provides diagnostic impression. Returns structured pathology report."
+            ),
+            parameters="image (PIL.Image), stain_type (str, optional), specimen_type (str, optional)",
+            agent=self._path,
+            execute_fn=self._exec_analyze_path,
+        ))
+
+        self._register(Tool(
             name="GenerateSOAP",
             description=(
                 "Generates a structured SOAP note with ICD-10 codes from the accumulated "
@@ -137,11 +180,12 @@ class ToolRegistry:
         self._register(Tool(
             name="CheckDrugInteractions",
             description=(
-                "Verifies pharmacological safety of prescribed medications using TxGemma 2B. "
-                "Use this after SOAP generation when medications have been identified in the "
-                "Plan section. Checks for drug-drug interactions, contraindications, and "
-                "generates monitoring recommendations. Returns interaction analysis with "
-                "severity levels (HIGH/MODERATE/LOW)."
+                "Verifies pharmacological safety of prescribed medications using TxGemma 9B + "
+                "deterministic FDA-inspired rules database. Use this after SOAP generation when "
+                "medications have been identified. Checks for drug-drug interactions with "
+                "4-level alert classification: INFO/WARNING/CRITICAL/CONTRAINDICATED. "
+                "CONTRAINDICATED interactions block FHIR output until physician review. "
+                "Returns interaction analysis with alert levels, mechanisms, and clinical actions."
             ),
             parameters="soap_text (str)",
             agent=self._drug_interaction,
@@ -265,6 +309,7 @@ class ToolRegistry:
             "time_ms": result.processing_time_ms,
             "error": result.error,
             "agent_name": result.agent_name,
+            "confidence": result.confidence,  # Calibrated confidence for escalation
         }
 
     async def _exec_check_drugs(self, **kwargs) -> dict:
@@ -295,15 +340,99 @@ class ToolRegistry:
             "agent_name": result.agent_name,
         }
 
+    async def _exec_analyze_cxr(self, **kwargs) -> dict:
+        image = kwargs.get("image")
+        clinical_context = kwargs.get("clinical_context", "")
+        if image is None:
+            return {"error": "No image provided", "success": False, "agent_name": "cxr_specialist"}
+        result = await self._cxr.execute({
+            "image": image,
+            "clinical_context": clinical_context,
+        })
+        data = result.data if result.success and isinstance(result.data, dict) else {}
+        return {
+            "findings": data.get("findings", ""),
+            "specialty": "chest_xray",
+            "confidence": data.get("confidence", 0.9),
+            "success": result.success,
+            "model": result.model_used,
+            "time_ms": result.processing_time_ms,
+            "error": result.error,
+            "agent_name": result.agent_name,
+        }
+
+    async def _exec_analyze_derm(self, **kwargs) -> dict:
+        image = kwargs.get("image")
+        patient_context = kwargs.get("patient_context", "")
+        if image is None:
+            return {"error": "No image provided", "success": False, "agent_name": "derm_specialist"}
+        result = await self._derm.execute({
+            "image": image,
+            "patient_context": patient_context,
+        })
+        data = result.data if result.success and isinstance(result.data, dict) else {}
+        return {
+            "findings": data.get("findings", ""),
+            "specialty": "dermatology",
+            "confidence": data.get("confidence", 0.88),
+            "success": result.success,
+            "model": result.model_used,
+            "time_ms": result.processing_time_ms,
+            "error": result.error,
+            "agent_name": result.agent_name,
+        }
+
+    async def _exec_analyze_path(self, **kwargs) -> dict:
+        image = kwargs.get("image")
+        stain_type = kwargs.get("stain_type", "H&E")
+        specimen_type = kwargs.get("specimen_type", "")
+        if image is None:
+            return {"error": "No image provided", "success": False, "agent_name": "path_specialist"}
+        result = await self._path.execute({
+            "image": image,
+            "stain_type": stain_type,
+            "specimen_type": specimen_type,
+        })
+        data = result.data if result.success and isinstance(result.data, dict) else {}
+        return {
+            "findings": data.get("findings", ""),
+            "specialty": "pathology",
+            "confidence": data.get("confidence", 0.85),
+            "success": result.success,
+            "model": result.model_used,
+            "time_ms": result.processing_time_ms,
+            "error": result.error,
+            "agent_name": result.agent_name,
+        }
+
     async def _exec_compile_fhir(self, **kwargs) -> dict:
         soap_note_data = kwargs.get("soap_note")
         icd_codes = kwargs.get("icd_codes", [])
         image_findings = kwargs.get("image_findings")
         medications = kwargs.get("medications", [])
         agent_chain = kwargs.get("agent_chain", [])
+        drug_check = kwargs.get("drug_check")
 
         if soap_note_data is None:
             return {"error": "No SOAP note to compile", "success": False, "agent_name": "fhir_assembler"}
+
+        # Drug safety gate: CONTRAINDICATED interactions block FHIR output
+        if drug_check and isinstance(drug_check, dict) and drug_check.get("blocks_fhir"):
+            contraindicated = [
+                i for i in drug_check.get("interactions", [])
+                if i.get("alert_level") == "CONTRAINDICATED"
+            ]
+            return {
+                "error": (
+                    f"FHIR compilation blocked: {len(contraindicated)} CONTRAINDICATED drug interaction(s) detected. "
+                    f"Physician review and explicit override required before finalizing. "
+                    f"Interactions: {[i['drug_pair'] for i in contraindicated]}"
+                ),
+                "success": False,
+                "agent_name": "fhir_assembler",
+                "blocked_reason": "CONTRAINDICATED_DRUG_INTERACTION",
+                "contraindicated_pairs": [i["drug_pair"] for i in contraindicated],
+            }
 
         soap = SOAPNote(**soap_note_data) if isinstance(soap_note_data, dict) else soap_note_data
         bundle = FHIRBuilder.create_full_bundle(

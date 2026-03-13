@@ -19,6 +19,17 @@ class AgentResult(BaseModel):
     error: Optional[str] = None
     processing_time_ms: float = 0.0
     model_used: str = ""
+    confidence: float = 1.0  # 0.0-1.0 confidence score (used for escalation logic)
+
+
+class CritiqueResult(BaseModel):
+    """Result from the agent self-critique peer review loop."""
+
+    iteration: int
+    issues_found: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    approved: bool = False
+    critique_text: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +100,7 @@ class PipelineMetadata(BaseModel):
     processing_time_ms: float
     model_used: str
     error: Optional[str] = None
+    confidence: float = 1.0  # Per-agent confidence score (propagated to FHIR Provenance)
 
 
 class PipelineResponse(BaseModel):

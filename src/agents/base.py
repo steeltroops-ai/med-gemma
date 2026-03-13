@@ -138,12 +138,19 @@ class BaseAgent(ABC):
             elapsed_ms = (time.perf_counter() - start) * 1000
             self._total_time_ms += elapsed_ms
             self._last_execution_ms = elapsed_ms
+
+            # Extract confidence from result dict if provided by the agent
+            confidence = 1.0
+            if isinstance(result, dict) and "confidence" in result:
+                confidence = float(result.get("confidence", 1.0))
+
             return AgentResult(
                 agent_name=self.name,
                 success=True,
                 data=result,
                 processing_time_ms=round(elapsed_ms, 1),
                 model_used=self.model_id,
+                confidence=confidence,
             )
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - start) * 1000

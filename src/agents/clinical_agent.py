@@ -171,7 +171,7 @@ class ClinicalReasoningAgent(BaseAgent):
 
         transcript = input_data.get("transcript", "")
         image_findings = input_data.get("image_findings", "")
-        task = input_data.get("task", "soap")
+        _task = input_data.get("task", "soap")  # noqa: F841 — reserved for future multi-task routing
 
         if not transcript.strip() and not image_findings.strip():
             raise ValueError("No clinical text provided for reasoning.")
@@ -208,16 +208,65 @@ class ClinicalReasoningAgent(BaseAgent):
                 "soap_note": DEMO_SOAP.model_dump(),
                 "icd_codes": DEMO_ICD_CODES,
                 "raw_output": raw_output,
+                "confidence": 0.50,  # Low confidence — parse failure
             }
+
+        # Compute calibrated confidence based on SOAP completeness
+        confidence = self._compute_soap_confidence(soap_note, icd_codes)
 
         return {
             "soap_note": soap_note.model_dump(),
             "icd_codes": icd_codes if icd_codes else DEMO_ICD_CODES,
             "raw_output": raw_output,
+            "confidence": confidence,
         }
 
     @staticmethod
-    def _parse_soap(text: str) -> SOAPNote:
+    def _compute_soap_confidence(soap: "SOAPNote", icd_codes: list[str]) -> float:
+        """
+        Compute a calibrated confidence score (0.0-1.0) based on SOAP completeness.
+
+        Scoring rubric:
+          - All 4 SOAP sections populated (≥20 chars each): +0.60
+          - Subjective ≥ 50 chars (detailed patient history): +0.10
+          - Objective ≥ 50 chars (vitals + exam findings): +0.10
+          - Assessment has differential diagnoses (≥ 30 chars): +0.05
+          - Plan has specific interventions (≥ 30 chars): +0.05
+          - ICD-10 codes extracted (≥ 1): +0.05
+          - ICD-10 codes ≥ 2 (comprehensive coding): +0.05
+        Total max: 1.00
+        """
+        score = 0.0
+        sections = [soap.subjective, soap.objective, soap.assessment, soap.plan]
+
+        # Base: all 4 sections present
+        if all(len(s.strip()) >= 20 for s in sections):
+            score += 0.60
+        elif sum(1 for s in sections if len(s.strip()) >= 20) >= 3:
+            score += 0.45
+        elif sum(1 for s in sections if len(s.strip()) >= 10) >= 2:
+            score += 0.30
+
+        # Detail bonuses
+        if len(soap.subjective.strip()) >= 50:
+            score += 0.10
+        if len(soap.objective.strip()) >= 50:
+            score += 0.10
+        if len(soap.assessment.strip()) >= 30:
+            score += 0.05
+        if len(soap.plan.strip()) >= 30:
+            score += 0.05
+
+        # ICD-10 bonus
+        if len(icd_codes) >= 1:
+            score += 0.05
+        if len(icd_codes) >= 2:
+            score += 0.05
+
+        return min(round(score, 2), 1.0)
+
+    @staticmethod
+    def _parse_soap(text: str) -> "SOAPNote":
         """Parse raw MedGemma output into structured SOAP sections."""
         sections = {"subjective": "", "objective": "", "assessment": "", "plan": ""}
         current = None
@@ -420,11 +469,17 @@ class ClinicalReasoningAgent(BaseAgent):
         # Use ICD codes from diagnosis map, falling back to demo codes
         icd_codes = found_icd_codes if found_icd_codes else DEMO_ICD_CODES
 
+        # Compute confidence for deterministic output (lower baseline than LLM)
+        det_confidence = self._compute_soap_confidence(soap_note, icd_codes)
+        # Deterministic mode cap: max 0.85 (not as reliable as full LLM inference)
+        det_confidence = min(det_confidence, 0.85)
+
         return {
             "soap_note": soap_note.model_dump(),
             "icd_codes": icd_codes,
             "raw_output": f"[Deterministic extraction mode] Processed {len(transcript)} chars, "
                           f"found {len(found_diagnoses)} diagnoses, {len(medications)} medications.",
+            "confidence": det_confidence,
         }
 
     def get_demo_soap(self) -> SOAPNote:

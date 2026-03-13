@@ -152,8 +152,9 @@ class FHIRBuilder:
         if icd_codes:
             report["conclusionCode"] = []
             for code_str in icd_codes:
-                code = code_str.split(" - ")[0].split(" ")[0].strip() if " - " in code_str else code_str.strip()
-                desc = code_str.split(" - ", 1)[1].strip() if " - " in code_str else ""
+                parts = code_str.split(" - ", 1)
+                code = parts[0].split(" ")[0].strip()
+                desc = parts[1].strip() if len(parts) > 1 else ""
                 report["conclusionCode"].append(
                     {
                         "coding": [
@@ -224,11 +225,23 @@ class FHIRBuilder:
         """FHIR Provenance resource for regulatory traceability.
 
         Records the AI agent execution chain, model versions,
-        and inference timestamps.
+        inference timestamps, and per-agent confidence scores.
+        Confidence scores < 0.70 are flagged for physician review.
         """
         agents = []
         if agent_chain:
             for info in agent_chain:
+                confidence = info.get("confidence")
+                confidence_display = ""
+                physician_review_flag = ""
+                if confidence is not None:
+                    confidence_pct = f"{confidence:.0%}"
+                    confidence_display = f", confidence={confidence_pct}"
+                    if confidence < 0.55:
+                        physician_review_flag = " [CONSENSUS_REQUIRED — physician review mandatory]"
+                    elif confidence < 0.70:
+                        physician_review_flag = " [UNCERTAIN — escalated to MedGemma 27B]"
+
                 agents.append({
                     "role": [
                         {
@@ -241,8 +254,24 @@ class FHIRBuilder:
                         }
                     ],
                     "who": {
-                        "display": f"{info.get('agent_name', 'unknown')} ({info.get('model_used', 'n/a')})",
+                        "display": (
+                            f"{info.get('agent_name', 'unknown')} "
+                            f"({info.get('model_used', 'n/a')}"
+                            f"{confidence_display})"
+                            f"{physician_review_flag}"
+                        ),
                     },
+                    # Extension: machine-readable confidence for downstream consumers
+                    "extension": [
+                        {
+                            "url": "https://medscribe.ai/fhir/StructureDefinition/agent-confidence",
+                            "valueDecimal": round(confidence, 4) if confidence is not None else 1.0,
+                        },
+                        {
+                            "url": "https://medscribe.ai/fhir/StructureDefinition/execution-time-ms",
+                            "valueDecimal": info.get("execution_time_ms", 0),
+                        },
+                    ],
                 })
 
         return {

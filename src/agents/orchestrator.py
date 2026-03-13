@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TypedDict, Any
+from typing import Any
 
 from PIL import Image
 
@@ -132,7 +132,7 @@ class ClinicalOrchestrator:
         # COGNITIVELY ROUTED STATE MACHINE
         # Replaces linear execution with a state graph topology
         # =============================================================
-        
+
         state: dict[str, Any] = {
             "current_node": "INTAKE",
             "audio_path": audio_path,
@@ -153,7 +153,7 @@ class ClinicalOrchestrator:
 
         # Deterministic Supervisor Loop (State Graph Router)
         while state["current_node"] != "END":
-            
+
             if state["current_node"] == "INTAKE":
                 log.info("Executing Node: INTAKE (Parallel MedASR + MedSigLIP)")
                 tasks = []
@@ -211,7 +211,7 @@ class ClinicalOrchestrator:
                 ))
                 if img_result.success and isinstance(img_result.data, dict):
                     state["image_findings"] = img_result.data.get("findings")
-                
+
                 # Advance Graph
                 state["current_node"] = "REASONING"
 
@@ -237,7 +237,7 @@ class ClinicalOrchestrator:
                         state["soap_note"] = soap_dict
                     state["icd_codes"] = clinical_result.data.get("icd_codes", [])
                     state["raw_clinical"] = clinical_result.data.get("raw_output", "")
-                
+
                 # Advance Graph
                 state["current_node"] = "SAFETY"
 
@@ -254,7 +254,7 @@ class ClinicalOrchestrator:
 
                 drug_input = {"soap_text": "\n".join(drug_text_parts)}
                 drug_result = await self.drug_interaction.execute(drug_input)
-                
+
                 state["metadata"].append(PipelineMetadata(
                     agent_name=drug_result.agent_name, success=drug_result.success,
                     processing_time_ms=drug_result.processing_time_ms,
@@ -262,7 +262,7 @@ class ClinicalOrchestrator:
                 ))
                 if drug_result.success:
                     state["drug_check"] = drug_result.data
-                
+
                 # Advance Graph
                 state["current_node"] = "QA"
 
@@ -302,14 +302,14 @@ class ClinicalOrchestrator:
                 ))
                 if qa_result.success:
                     state["qa_result_data"] = qa_result.data
-                
+
                 # Advance Graph
                 state["current_node"] = "ASSEMBLY"
 
             elif state["current_node"] == "ASSEMBLY":
                 total_ms = (time.perf_counter() - pipeline_start) * 1000
                 log.info(f"Node ASSEMBLY Complete | {total_ms:.0f}ms | State Terminated")
-                
+
                 # Terminal state exit
                 state["current_node"] = "END"
 

@@ -14,7 +14,6 @@ Agentic Workflow:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import tempfile
@@ -23,10 +22,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.agents.orchestrator import ClinicalOrchestrator
 from src.agents.cognitive_orchestrator import CognitiveOrchestrator
+from src.agents.orchestrator import ClinicalOrchestrator
 from src.core.schemas import (
     ClinicalRequest,
     ClinicalResponse,
@@ -74,10 +73,14 @@ app = FastAPI(
     title="MedScribe AI API",
     description=(
         "Agentic clinical documentation system powered by HAI-DEF models "
-        "(MedGemma 4B IT, MedASR, MedSigLIP, TxGemma 2B) via HF Inference API. "
-        "No GPU required -- CPU-only deployment on HF Spaces free tier."
+        "(MedGemma 4B/27B IT, MedASR, MedSigLIP-448, TxGemma 9B Predict, "
+        "CXR Foundation, Derm Foundation, Path Foundation) via HF Inference API. "
+        "No GPU required -- CPU-only deployment on HF Spaces free tier. "
+        "Implements ReAct cognitive loop with 10-tool dispatch registry, "
+        "agent self-critique (physician peer-review), parallel sub-orchestration, "
+        "4-tier inference fallback, and FHIR R4 output with audit Provenance."
     ),
-    version="2.0.0",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
@@ -96,12 +99,23 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
+    """Health check endpoint — returns inference backend status.
+
+    inference_backend values:
+      local_vllm      - Tier 0: air-gapped on-premise vLLM/Ollama
+      hf_inference_api - Tier 1: HuggingFace Serverless API (HAI-DEF models)
+      genai_sdk       - Tier 2: Google GenAI SDK
+      demo_fallback   - Tier 3: deterministic demo mode (no API keys)
+    """
     from src.core.inference_client import get_inference_backend
     backend = get_inference_backend()
     return {
         "status": "ok",
+        "version": "2.3.0",
         "inference_backend": backend,
         "hf_token_configured": bool(os.environ.get("HF_TOKEN", "")),
+        "local_vllm_configured": bool(os.environ.get("LOCAL_VLLM_URL", "")),
+        "demo_mode": backend == "demo_fallback",
     }
 
 
@@ -112,18 +126,27 @@ async def api_status():
     backend = get_inference_backend()
     return {
         "status": "online",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "inference_backend": backend,
         "models": {
             "clinical_reasoning": "google/medgemma-4b-it",
             "image_analysis": "google/medgemma-4b-it",
             "image_triage": "google/medsiglip-448",
             "transcription": "google/medasr",
-            "drug_interaction": "google/txgemma-2b-predict",
+            "drug_interaction": "google/txgemma-9b-predict",  # upgraded from 2B
+            "specialist_cxr": "google/cxr-foundation",
+            "specialist_derm": "google/derm-foundation",
+            "specialist_path": "google/path-foundation",
             "quality_assurance": "rules-engine",
+            "escalation": "google/medgemma-27b-text-it",
         },
         "hf_token_configured": bool(os.environ.get("HF_TOKEN", "")),
+        "local_vllm_configured": bool(os.environ.get("LOCAL_VLLM_URL", "")),
         "mode": "live" if backend != "demo_fallback" else "demo",
+        "tools_registered": 10,
+        "critique_loop_enabled": True,
+        "parallel_orchestration_enabled": True,
+        "confidence_escalation_threshold": 0.70,
     }
 
 
@@ -313,14 +336,22 @@ async def pipeline_stream(
 
 @app.post("/api/export/fhir")
 async def export_fhir(req: FHIRExportRequest):
-    """Generate a FHIR R4 bundle from clinical data."""
+    """Generate a FHIR R4 bundle from clinical data.
+
+    Returns a valid HL7 FHIR R4 Bundle document containing:
+    Encounter, Composition (SOAP), Condition (ICD-10), MedicationStatement,
+    DiagnosticReport (if image findings provided), and Provenance (audit trail).
+    """
     bundle = FHIRBuilder.create_full_bundle(
         soap_note=req.soap_note,
         icd_codes=req.icd_codes,
         image_findings=req.image_findings,
         encounter_type=req.encounter_type,
     )
-    return bundle
+    return JSONResponse(
+        content=bundle,
+        media_type="application/fhir+json",
+    )
 
 
 # ---------------------------------------------------------------------------
