@@ -33,7 +33,7 @@ tags:
 
 MedScribe AI implements a **ReAct (Reason + Act + Observe) cognitive loop** where MedGemma serves as an autonomous reasoning engine that dynamically dispatches five HAI-DEF foundation models as callable tools. Transforms raw clinical encounters (audio + text + images) into structured FHIR R4-compliant medical records with real-time pharmacological safety verification.
 
-**[Competition Writeup](docs/writeup.md)** | **[Live Demo](https://medscribbe.vercel.app/)** | **[API Backend](https://steeltroops-ai-med-gemma.hf.space/health)**
+**[Competition Writeup](writeup.md)** | **[Live Demo](https://medscribbe.vercel.app/)** | **[API Backend](https://steeltroops-ai-med-gemma.hf.space/health)**
 
 ---
 

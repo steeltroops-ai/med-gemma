@@ -24,6 +24,11 @@ MASTERPLAN.md
 docs/data/
 video/
 
+# Memory & Local Planning (never push to GitHub/HF)
+.memory/
+ROADMAP.md
+CLAUDE.md
+.claude/
 # OS
 .DS_Store
 Thumbs.db
